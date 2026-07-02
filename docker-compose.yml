@@ -1,0 +1,22 @@
+services:
+  umbrella-report:
+    build: .
+    container_name: umbrella-report
+    ports:
+      - "6961:6961"
+    environment:
+      - UMBRELLA_API_KEY=${UMBRELLA_API_KEY}
+      - UMBRELLA_API_SECRET=${UMBRELLA_API_SECRET}
+      - UMBRELLA_ORG_ID=${UMBRELLA_ORG_ID}
+      - MERAKI_API_KEY=${MERAKI_API_KEY}
+      - MERAKI_ORG_ID=${MERAKI_ORG_ID}
+      - MERAKI_CACHE_TTL_SECONDS=3600
+      - CACHE_TTL_SECONDS=600
+      - OUTPUT_DIR=/data/reports
+      - SCA_PORTAL_URL=${SCA_PORTAL_URL}
+      - SCA_API_USER=${SCA_API_USER}
+      - SCA_API_KEY=${SCA_API_KEY}
+      - NOC_CACHE_TTL_SECONDS=${NOC_CACHE_TTL_SECONDS:-60}
+    volumes:
+      - ./data/reports:/data/reports
+    restart: unless-stopped

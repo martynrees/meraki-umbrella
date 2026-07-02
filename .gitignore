@@ -1,0 +1,15 @@
+# Secrets -- never commit, only .env.example
+.env
+
+# Runtime state written to OUTPUT_DIR (presets, selected identities/network)
+data/reports/*
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor/OS cruft
+.DS_Store
+
+# Claude Code local settings (personal, not shared)
+.claude/settings.local.json

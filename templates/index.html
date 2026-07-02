@@ -1,0 +1,2745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home NOC — Network Monitor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230B1220'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%232DD4BF'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="{{ url_for('static', filename='vendor/fonts.css') }}">
+<script src="{{ url_for('static', filename='vendor/chart.umd.js') }}"></script>
+<style>
+:root{
+  --bg:#0B1220;
+  --panel:#101A2C;
+  --panel-2:#0D1626;
+  --border:#1F2A3D;
+  --text:#E6EDF3;
+  --muted:#7C8CA6;
+  --allowed:#2DD4BF;
+  --blocked:#F87171;
+  --accent:#60A5FA;
+  /* Reserved for alert/status "warning" tier only -- never reused as a
+     categorical color. Amber (~45° hue) sits maximally apart from
+     --allowed's teal (~172°) and --blocked's red (~0°) so the three status
+     colors stay distinguishable under protanopia/deuteranopia, and its
+     lightness/saturation matches the pastel-on-navy register the other two
+     already use on this background. */
+  --warning:#FBBF24;
+  --radius:10px;
+}
+*{box-sizing:border-box;}
+
+/* Themed scrollbars everywhere -- page body, dropdown panels, table wraps */
+html{scrollbar-width:thin; scrollbar-color:var(--border) transparent;}
+*{scrollbar-width:thin; scrollbar-color:var(--border) transparent;}
+::-webkit-scrollbar{width:10px; height:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{
+  background-color:var(--border); border-radius:8px; border:2px solid var(--bg);
+  background-clip:padding-box;
+}
+::-webkit-scrollbar-thumb:hover{background-color:var(--accent);}
+::-webkit-scrollbar-corner{background:transparent;}
+
+/* Panels sit on a lighter surface than the page background, so their
+   scrollbar thumb border needs to match that surface instead of --bg
+   or you'll see a faint mismatched ring around the thumb. */
+.dropdown-panel::-webkit-scrollbar{width:8px;}
+.dropdown-panel::-webkit-scrollbar-thumb{border-color:var(--panel-2); border-width:1.5px;}
+.table-wrap::-webkit-scrollbar-thumb{border-color:var(--panel);}
+
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--text);
+  font-family:'Inter',system-ui,sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1240px;margin:0 auto;padding:28px 20px 60px;}
+
+header.top{
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:22px; flex-wrap:wrap; gap:12px;
+}
+header.top h1{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:1.35rem; font-weight:700; margin:0;
+  display:flex; align-items:center; gap:10px;
+}
+.pulse-dot{
+  width:9px; height:9px; border-radius:50%; background:var(--allowed);
+  box-shadow:0 0 0 0 rgba(45,212,191,0.6);
+  animation:pulse 2.2s infinite;
+}
+@media (prefers-reduced-motion: reduce){ .pulse-dot{animation:none;} }
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 rgba(45,212,191,0.55);}
+  70%{box-shadow:0 0 0 8px rgba(45,212,191,0);}
+  100%{box-shadow:0 0 0 0 rgba(45,212,191,0);}
+}
+.subtitle{color:var(--muted); font-size:0.85rem; margin-top:2px;}
+.data-age{
+  color:var(--muted); font-size:0.75rem; margin-top:3px; font-family:'IBM Plex Mono',monospace;
+  display:flex; align-items:center; gap:6px;
+}
+.data-age .age-dot{width:6px; height:6px; border-radius:50%; background:var(--allowed); flex-shrink:0;}
+.data-age.stale .age-dot{background:var(--blocked);}
+.data-age.stale{color:var(--blocked);}
+
+.range-pills{display:flex; gap:6px; flex-wrap:wrap;}
+.pill{
+  background:var(--panel); border:1px solid var(--border); color:var(--muted);
+  padding:6px 14px; border-radius:999px; font-size:0.82rem; cursor:pointer;
+  font-family:'IBM Plex Mono',monospace; transition:all .15s;
+}
+.pill:hover{border-color:var(--accent); color:var(--text);}
+.pill.active{background:var(--accent); color:#06101F; border-color:var(--accent); font-weight:600;}
+.pill:focus-visible{outline:2px solid var(--accent); outline-offset:2px;}
+
+.filters{
+  display:flex; gap:10px; align-items:center; margin-bottom:22px; flex-wrap:wrap;
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:12px 14px;
+}
+.filter-group{display:flex; align-items:center; gap:6px; font-size:0.82rem; color:var(--muted);}
+select, .multi-btn{
+  background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:6px 10px; font-size:0.82rem; font-family:inherit; cursor:pointer;
+}
+select:focus-visible, .multi-btn:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+.multi-btn{
+  display:inline-flex; align-items:center; gap:8px; min-width:150px; justify-content:space-between;
+}
+.multi-btn::after{
+  content:""; width:0; height:0; border-left:4px solid transparent; border-right:4px solid transparent;
+  border-top:5px solid var(--muted); flex-shrink:0;
+}
+.multi-btn:hover{border-color:var(--accent);}
+#preset-dropdown{margin-left:auto;}
+#fetch-btn{
+  background:var(--accent); border:1px solid var(--accent); color:#06101F;
+  padding:6px 18px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;
+}
+#fetch-btn:hover{filter:brightness(1.08);}
+#fetch-btn:disabled{
+  background:var(--panel-2); border-color:var(--border); color:var(--muted);
+  cursor:not-allowed; filter:none;
+}
+#cancel-fetch-btn{
+  background:rgba(248,113,113,0.12); border:1px solid rgba(248,113,113,0.4); color:var(--blocked);
+  padding:6px 16px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;
+}
+#cancel-fetch-btn:hover{background:rgba(248,113,113,0.2);}
+.dropdown{position:relative;}
+.dropdown-panel{
+  position:absolute; top:calc(100% + 6px); left:0; z-index:20; min-width:100%; width:max-content; max-width:320px;
+  max-height:260px; overflow-y:auto; background:var(--panel-2); border:1px solid var(--border); border-radius:8px;
+  padding:6px; display:none; box-shadow:0 12px 28px rgba(0,0,0,0.5);
+}
+.dropdown-panel.open{display:block;}
+.dropdown-panel label{
+  display:flex; align-items:center; gap:8px; padding:6px 8px; font-size:0.8rem; color:var(--text);
+  cursor:pointer; border-radius:5px; white-space:nowrap;
+}
+.dropdown-panel label:hover{background:var(--panel);}
+.dropdown-panel input[type=checkbox]{
+  accent-color:var(--accent); width:14px; height:14px; margin:0; cursor:pointer; flex-shrink:0;
+}
+.dropdown-panel .empty-note{color:var(--muted); font-size:0.8rem; padding:6px 8px;}
+
+.preset-save-row{
+  display:flex; gap:6px; padding:4px 4px 10px; margin-bottom:6px; border-bottom:1px solid var(--border);
+}
+.preset-save-row input[type=text]{
+  flex:1; min-width:0; background:var(--panel); border:1px solid var(--border); color:var(--text);
+  padding:5px 8px; border-radius:5px; font-size:0.8rem;
+}
+.preset-save-row button{
+  background:var(--accent); border:1px solid var(--accent); color:#06101F;
+  padding:5px 12px; border-radius:5px; cursor:pointer; font-size:0.78rem; font-weight:600; flex-shrink:0;
+}
+.preset-save-row button:disabled{background:var(--panel-2); border-color:var(--border); color:var(--muted); cursor:not-allowed;}
+
+.preset-item{
+  display:flex; align-items:center; gap:6px; padding:6px 8px; border-radius:5px;
+}
+.preset-item:hover{background:var(--panel);}
+.preset-item .preset-name{
+  flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-size:0.82rem; color:var(--text); cursor:pointer;
+}
+.preset-item .preset-name:hover{color:var(--accent);}
+.preset-item .preset-meta{color:var(--muted); font-size:0.68rem; display:block;}
+.preset-item input.preset-rename-input{
+  flex:1; min-width:0; background:var(--panel-2); border:1px solid var(--accent); color:var(--text);
+  padding:3px 6px; border-radius:4px; font-size:0.8rem;
+}
+.preset-item-btn{
+  background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:0.85rem;
+  padding:2px 5px; border-radius:4px; flex-shrink:0; line-height:1;
+}
+.preset-item-btn:hover{color:var(--text); background:var(--panel-2);}
+.preset-item-btn.danger:hover{color:var(--blocked);}
+.dropdown-panel .ip-option{
+  display:block; padding:6px 8px; font-size:0.8rem; font-family:'IBM Plex Mono',monospace;
+  color:var(--text); cursor:pointer; border-radius:5px; white-space:nowrap;
+}
+.dropdown-panel .ip-option:hover, .dropdown-panel .ip-option.highlighted{background:var(--panel); color:var(--accent);}
+#ip-dropdown{position:relative;}
+#ip-dropdown input[type=text], #identity-search-dropdown input[type=text]{width:100%;}
+#identity-search-dropdown{position:relative;}
+
+.cards{display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:22px;}
+@media (max-width:900px){ .cards{grid-template-columns:repeat(2,1fr);} }
+.card{
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:14px 16px;
+}
+.card .label{color:var(--muted); font-size:0.72rem; text-transform:uppercase; letter-spacing:0.04em;}
+.card .value{
+  font-family:'IBM Plex Mono',monospace; font-size:1.5rem; font-weight:600; margin-top:4px;
+}
+.card .value.allowed{color:var(--allowed);}
+.card .value.blocked{color:var(--blocked);}
+
+.panel{
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:18px; margin-bottom:22px;
+}
+.panel h2{
+  font-family:'Space Grotesk',sans-serif; font-size:0.95rem; margin:0 0 12px;
+  color:var(--text); display:flex; align-items:center; gap:8px;
+}
+.legend-dot{width:8px; height:8px; border-radius:50%; display:inline-block;}
+.chart-wrap{height:220px;}
+
+.tabs{display:flex; gap:4px; margin-bottom:14px; border-bottom:1px solid var(--border);}
+.tab{
+  padding:8px 16px; font-size:0.85rem; color:var(--muted); cursor:pointer;
+  border-bottom:2px solid transparent; font-family:'Space Grotesk',sans-serif; font-weight:600;
+}
+.tab.active{color:var(--text); border-bottom-color:var(--accent);}
+.tab-content{display:none;}
+.tab-content.active{display:block;}
+
+/* Top-level section nav (Overview/DNS Activity/Network Health/Security
+   Alerts) -- deliberately separate classes from .tab/.tab-content above.
+   Reusing .tab would make the page's single generic switchToTab() (which
+   toggles *every* .tab on the page by data-tab match) clobber this nav's
+   active state whenever an inner DNS Activity tab is clicked, since that
+   function has no notion of which tab row it's operating on. */
+.section-tabs{display:flex; gap:6px; margin-bottom:20px; border-bottom:1px solid var(--border);}
+.section-tab{
+  padding:10px 18px; font-size:0.9rem; color:var(--muted); cursor:pointer;
+  border-bottom:2px solid transparent; font-family:'Space Grotesk',sans-serif; font-weight:700;
+}
+.section-tab.active{color:var(--text); border-bottom-color:var(--accent);}
+.section-tab .alert-count-pip{
+  display:inline-block; min-width:16px; padding:0 5px; margin-left:6px; border-radius:999px;
+  background:var(--blocked); color:#06101F; font-size:0.68rem; font-weight:700; text-align:center;
+  font-family:'IBM Plex Mono',monospace; line-height:16px;
+}
+.network-select-wrap{
+  margin-left:auto; display:flex; align-items:center; gap:8px; padding-bottom:8px; align-self:flex-end;
+}
+.network-select-label{color:var(--muted); font-size:0.78rem;}
+#network-select{
+  background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:5px 9px; font-size:0.8rem; font-family:inherit; cursor:pointer;
+}
+.section-panel{display:none;}
+.section-panel.active{display:block;}
+
+/* Persistent status strip -- always visible above the section nav,
+   regardless of which section is active. Auto-refreshes on the same
+   interval as the NOC backend cache TTL. */
+.status-strip{
+  display:flex; align-items:center; gap:18px; flex-wrap:wrap;
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+  padding:10px 16px; margin-bottom:16px; font-size:0.82rem;
+}
+.status-item{display:flex; align-items:center; gap:7px; cursor:pointer; color:var(--text);}
+.status-item:hover{color:var(--accent);}
+.status-item .status-label{color:var(--muted);}
+.status-dot{width:8px; height:8px; border-radius:50%; flex-shrink:0; background:var(--muted);}
+.status-dot.good{background:var(--allowed);}
+.status-dot.warning{background:var(--warning);}
+.status-dot.critical{background:var(--blocked);}
+.status-strip .status-sep{color:var(--border);}
+.status-strip .status-updated{margin-left:auto; color:var(--muted); font-size:0.72rem; font-family:'IBM Plex Mono',monospace;}
+
+.table-toolbar{display:flex; gap:10px; margin-bottom:10px; align-items:center;}
+.table-toolbar input[type=text]{
+  flex:1; max-width:320px; background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+  padding:7px 10px; border-radius:6px; font-size:0.85rem;
+}
+.table-toolbar input[type=text]:focus-visible{outline:2px solid var(--accent); outline-offset:1px;}
+.clear-btn{
+  background:var(--panel-2); border:1px solid var(--border); color:var(--muted);
+  padding:7px 14px; border-radius:6px; cursor:pointer; font-size:0.82rem; flex-shrink:0;
+}
+.clear-btn:hover{border-color:var(--accent); color:var(--text);}
+#ip-search-btn, #identity-search-btn{
+  background:var(--panel-2); border:1px solid var(--border); color:var(--text);
+  padding:7px 16px; border-radius:6px; cursor:pointer; font-size:0.82rem;
+}
+#ip-search-btn:hover, #identity-search-btn:hover{border-color:var(--accent);}
+#ip-search-btn:disabled, #identity-search-btn:disabled{color:var(--muted); cursor:not-allowed;}
+#ip-view-client-btn{
+  background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.35); color:var(--accent);
+  padding:7px 16px; border-radius:6px; cursor:pointer; font-size:0.82rem; margin-left:auto;
+}
+#ip-view-client-btn:hover{background:rgba(96,165,250,0.18);}
+.count-note{color:var(--muted); font-size:0.78rem;}
+
+.table-wrap{max-height:520px; overflow-y:auto; border:1px solid var(--border); border-radius:8px;}
+table{width:100%; border-collapse:collapse; font-size:0.82rem;}
+th, td{padding:8px 12px; text-align:left; border-bottom:1px solid var(--border); white-space:nowrap;}
+th{
+  background:var(--panel-2); position:sticky; top:0; color:var(--muted); font-weight:600;
+  cursor:pointer; user-select:none; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.03em;
+}
+th:hover{color:var(--text);}
+th .arrow{opacity:0.5; margin-left:4px;}
+td.domain, td.category{font-family:'IBM Plex Mono',monospace;}
+.truncate{
+  display:block; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.truncate.has-tip{cursor:help;}
+
+/* Rendered as a fixed-position element (see #global-tooltip in JS) rather
+   than a pseudo-element anchored to the cell, because .table-wrap has
+   overflow-y:auto -- and overflow clipping applies to ALL descendants,
+   including absolutely-positioned ones, so an anchored tooltip would get
+   silently clipped whenever the row is inside a scrolling container. */
+#global-tooltip{
+  position:fixed; top:-9999px; left:-9999px; z-index:1000;
+  background:#152238; color:#F4F8FF; border:1px solid var(--accent); border-radius:8px;
+  padding:7px 10px; font-size:0.78rem; font-family:'IBM Plex Mono',monospace; white-space:pre-line;
+  max-width:420px; word-break:break-word;
+  box-shadow:0 0 0 1px rgba(96,165,250,0.15), 0 10px 16px rgba(0,0,0,0.55), 0 0 18px rgba(96,165,250,0.25);
+  opacity:0; visibility:hidden; transition:opacity .12s;
+  pointer-events:none;
+}
+#global-tooltip.visible{opacity:1; visibility:visible;}
+.card .value.has-tip{cursor:help;}
+td.num{font-family:'IBM Plex Mono',monospace; text-align:right;}
+tr:hover td{background:rgba(255,255,255,0.02);}
+.badge{
+  display:inline-block; padding:1px 7px; border-radius:4px; font-size:0.72rem; font-family:'IBM Plex Mono',monospace;
+}
+.badge.allowed{background:rgba(45,212,191,0.15); color:var(--allowed);}
+.badge.blocked{background:rgba(248,113,113,0.15); color:var(--blocked);}
+.badge.severity-critical{background:rgba(248,113,113,0.15); color:var(--blocked);}
+.badge.severity-warning{background:rgba(251,191,36,0.15); color:var(--warning);}
+.badge.severity-info{background:rgba(96,165,250,0.15); color:var(--accent);}
+.badge.source-meraki{background:rgba(96,165,250,0.15); color:var(--accent);}
+.badge.source-sca{background:rgba(45,212,191,0.15); color:var(--allowed);}
+.alert-link{color:var(--accent); text-decoration:none; font-size:0.78rem;}
+.alert-link:hover{text-decoration:underline;}
+
+.blocked-item{
+  display:flex; align-items:center; gap:12px; padding:10px 12px; border-radius:8px;
+  background:rgba(248,113,113,0.06); border:1px solid rgba(248,113,113,0.18); margin-bottom:8px;
+}
+.blocked-item:last-child{margin-bottom:0;}
+.blocked-rank{
+  flex-shrink:0; width:22px; height:22px; border-radius:50%; background:rgba(248,113,113,0.18);
+  color:var(--blocked); font-family:'IBM Plex Mono',monospace; font-size:0.72rem; font-weight:600;
+  display:flex; align-items:center; justify-content:center;
+}
+.blocked-item-main{flex:1; min-width:0;}
+.blocked-item-domain{
+  font-family:'IBM Plex Mono',monospace; font-size:0.85rem; color:var(--text);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; display:block;
+}
+.blocked-item-category{color:var(--muted); font-size:0.75rem;}
+.blocked-item-count{
+  flex-shrink:0; text-align:right; font-family:'IBM Plex Mono',monospace; color:var(--blocked);
+  font-size:0.95rem; font-weight:600;
+}
+.blocked-item-count .count-label{display:block; color:var(--muted); font-size:0.68rem; font-weight:400; text-transform:uppercase;}
+
+.domain-banner{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  background:rgba(96,165,250,0.08); border:1px solid rgba(96,165,250,0.25); border-radius:8px;
+  padding:9px 14px; margin-bottom:14px; font-size:0.82rem; color:var(--text);
+}
+.domain-banner strong{font-family:'IBM Plex Mono',monospace; color:var(--accent);}
+.domain-banner button{
+  background:transparent; border:1px solid var(--border); color:var(--muted);
+  padding:4px 12px; border-radius:6px; cursor:pointer; font-size:0.78rem; flex-shrink:0;
+}
+.domain-banner button:hover{border-color:var(--accent); color:var(--text);}
+
+td.domain.clickable{cursor:pointer;}
+td.domain.clickable .truncate:hover{color:var(--accent); text-decoration:underline;}
+td.domain.clickable-ip{cursor:pointer;}
+td.domain.clickable-ip .truncate{font-family:'IBM Plex Mono',monospace;}
+td.domain.clickable-ip .truncate:hover{color:var(--accent); text-decoration:underline;}
+td.category.clickable{cursor:pointer;}
+td.category.clickable .truncate:hover{color:var(--accent); text-decoration:underline;}
+
+.modal-overlay{
+  position:fixed; inset:0; background:rgba(5,9,16,0.7); z-index:2000;
+  display:none; align-items:center; justify-content:center; padding:20px;
+}
+.modal-overlay.open{display:flex;}
+.modal-box{
+  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  max-width:480px; width:100%; max-height:80vh; overflow-y:auto;
+  box-shadow:0 20px 60px rgba(0,0,0,0.6);
+}
+.modal-header{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:16px 20px; border-bottom:1px solid var(--border);
+}
+.modal-header h3{
+  margin:0; font-family:'Space Grotesk',sans-serif; font-size:1rem; color:var(--text);
+  display:flex; align-items:center; gap:8px;
+}
+.modal-header h3 .modal-ip{font-family:'IBM Plex Mono',monospace; color:var(--accent); font-size:0.9rem;}
+.modal-close-btn{
+  background:transparent; border:none; color:var(--muted); cursor:pointer; font-size:1.1rem;
+  padding:2px 8px; border-radius:6px; line-height:1;
+}
+.modal-close-btn:hover{color:var(--text); background:var(--panel-2);}
+.modal-body{padding:16px 20px;}
+.modal-field{
+  display:flex; justify-content:space-between; gap:16px; padding:8px 0;
+  border-bottom:1px solid var(--border); font-size:0.85rem;
+}
+.modal-field:last-child{border-bottom:none;}
+.modal-field .modal-label{color:var(--muted); flex-shrink:0;}
+.modal-field .modal-value{
+  color:var(--text); text-align:right; word-break:break-word;
+  font-family:'IBM Plex Mono',monospace; font-size:0.82rem;
+}
+.modal-section-title{
+  color:var(--muted); font-size:0.7rem; text-transform:uppercase; letter-spacing:0.04em;
+  margin:16px 0 4px; font-family:'Space Grotesk',sans-serif; font-weight:600;
+}
+.modal-footnote{color:var(--muted); font-size:0.72rem; margin-top:14px; padding-top:10px; border-top:1px dashed var(--border);}
+.badge.policy{background:rgba(96,165,250,0.15); color:var(--accent); padding:1px 7px; border-radius:4px; font-size:0.72rem; font-family:'IBM Plex Mono',monospace;}
+
+.modal-field select, .modal-field input[type=datetime-local]{
+  background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+  border-radius:6px; padding:5px 9px; font-size:0.82rem; font-family:inherit;
+}
+.fw-warning{
+  color:var(--blocked); border-top:none; background:rgba(248,113,113,0.08);
+  border-radius:8px; padding:10px 12px; margin-top:14px;
+}
+.fw-modal-actions{display:flex; gap:10px; justify-content:flex-end; margin-top:16px;}
+#fw-modal-confirm-btn{
+  background:var(--accent); border:1px solid var(--accent); color:#06101F;
+  padding:7px 16px; border-radius:6px; cursor:pointer; font-size:0.82rem; font-weight:600;
+}
+#fw-modal-confirm-btn:hover{filter:brightness(1.08);}
+#fw-modal-confirm-btn:disabled{background:var(--panel-2); border-color:var(--border); color:var(--muted); cursor:not-allowed; filter:none;}
+.fw-cancel-link{color:var(--blocked); font-size:0.78rem; cursor:pointer; text-decoration:none;}
+.fw-cancel-link:hover{text-decoration:underline;}
+.fw-schedule-btn{
+  background:rgba(96,165,250,0.1); border:1px solid rgba(96,165,250,0.35); color:var(--accent);
+  padding:5px 12px; border-radius:6px; cursor:pointer; font-size:0.78rem;
+}
+.fw-schedule-btn:hover{background:rgba(96,165,250,0.18);}
+
+.loading, .empty{color:var(--muted); font-size:0.85rem; padding:30px; text-align:center;}
+.error-msg{color:var(--blocked); font-size:0.85rem; padding:14px; background:rgba(248,113,113,0.08); border-radius:8px; margin-bottom:16px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="status-strip" id="status-strip">
+    <div class="status-item" data-jump-section="health"><span class="status-dot" id="status-dot-wan"></span> <span class="status-label">WAN</span> <span id="status-text-wan">—</span></div>
+    <span class="status-sep">|</span>
+    <div class="status-item" data-jump-section="health"><span class="status-dot" id="status-dot-vpn"></span> <span class="status-label">VPN</span> <span id="status-text-vpn">—</span></div>
+    <span class="status-sep">|</span>
+    <div class="status-item" data-jump-section="health"><span class="status-dot" id="status-dot-devices"></span> <span class="status-label">Devices</span> <span id="status-text-devices">—</span></div>
+    <span class="status-sep">|</span>
+    <div class="status-item" data-jump-section="security"><span class="status-dot" id="status-dot-alerts"></span> <span class="status-label">Open alerts</span> <span id="status-text-alerts">—</span></div>
+    <span class="status-updated" id="status-updated"></span>
+  </div>
+
+  <div class="section-tabs" id="section-tabs">
+    <div class="section-tab active" data-section="overview">Overview</div>
+    <div class="section-tab" data-section="dns">DNS Activity</div>
+    <div class="section-tab" data-section="health">Network Health</div>
+    <div class="section-tab" data-section="security">Security Alerts<span class="alert-count-pip" id="security-alert-pip" style="display:none;"></span></div>
+    <div class="section-tab" data-section="firmware">Firmware</div>
+    <div class="section-tab" data-section="map">Network Map</div>
+    <div class="network-select-wrap" id="network-select-wrap" title="Scopes Overview/Network Health/Security Alerts/Firmware/Network Map to one Meraki network. DNS Activity has its own identity filter and isn't affected.">
+      <span class="network-select-label">Network</span>
+      <select id="network-select"><option value="">Loading...</option></select>
+    </div>
+  </div>
+
+  <div id="error-container"></div>
+
+  <div class="section-panel active" id="section-overview">
+    <div class="cards" id="overview-cards">
+      <div class="card"><div class="label">WAN uplinks</div><div class="value" id="ov-uplinks">—</div></div>
+      <div class="card"><div class="label">VPN peers</div><div class="value" id="ov-vpn">—</div></div>
+      <div class="card"><div class="label">Devices online</div><div class="value" id="ov-devices">—</div></div>
+      <div class="card"><div class="label">Open alerts</div><div class="value" id="ov-alerts">—</div></div>
+      <div class="card"><div class="label">Critical alerts</div><div class="value blocked" id="ov-critical">—</div></div>
+    </div>
+    <div class="panel">
+      <h2><span class="legend-dot" style="background:var(--blocked)"></span> Recent alerts</h2>
+      <div class="table-wrap">
+        <table id="overview-alerts-table">
+          <thead>
+            <tr>
+              <th>Severity</th>
+              <th>Source</th>
+              <th>Title</th>
+              <th>Context</th>
+              <th>Started</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="6" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-panel" id="section-health">
+    <div class="cards" id="health-device-cards">
+      <div class="card"><div class="label">Online</div><div class="value allowed" id="health-dev-online">—</div></div>
+      <div class="card"><div class="label">Offline</div><div class="value blocked" id="health-dev-offline">—</div></div>
+      <div class="card"><div class="label">Alerting</div><div class="value" id="health-dev-alerting">—</div></div>
+      <div class="card"><div class="label">Dormant</div><div class="value" id="health-dev-dormant">—</div></div>
+      <div class="card"><div class="label">Total devices</div><div class="value" id="health-dev-total">—</div></div>
+    </div>
+    <div class="panel">
+      <h2><span class="legend-dot" style="background:var(--accent)"></span> WAN uplinks</h2>
+      <div class="table-wrap">
+        <table id="uplinks-table">
+          <thead><tr><th>Network</th><th>Device</th><th>Interface</th><th>Status</th><th>IP</th><th>Public IP</th><th>Gateway</th></tr></thead>
+          <tbody><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2><span class="legend-dot" style="background:var(--accent)"></span> VPN peers</h2>
+      <div class="table-wrap">
+        <table id="vpn-table">
+          <thead><tr><th>Network</th><th>Type</th><th>Peer</th><th>Reachability</th></tr></thead>
+          <tbody><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-panel" id="section-security">
+    <div class="panel">
+      <h2><span class="legend-dot" style="background:var(--blocked)"></span> All alerts — Meraki &amp; Secure Cloud Analytics</h2>
+      <div class="table-toolbar">
+        <input type="text" id="alerts-search" placeholder="Filter by title or context...">
+        <button class="clear-btn" id="alerts-search-clear" style="display:none;">Clear</button>
+        <div class="filter-group">
+          <span>Source</span>
+          <select id="alerts-source-select">
+            <option value="">All</option>
+            <option value="meraki">Meraki</option>
+            <option value="secure_cloud_analytics">Secure Cloud Analytics</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <span>Status</span>
+          <select id="alerts-status-select">
+            <option value="">All</option>
+            <option value="open">Open</option>
+            <option value="resolved">Resolved</option>
+          </select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="security-alerts-table">
+          <thead>
+            <tr>
+              <th data-key="severity">Severity</th>
+              <th data-key="source">Source</th>
+              <th data-key="title">Title</th>
+              <th data-key="context">Context</th>
+              <th data-key="started_at">Started</th>
+              <th data-key="status">Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody><tr><td colspan="7" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+      <div class="modal-footnote" id="sca-not-configured-note" style="display:none;">
+        Secure Cloud Analytics isn't configured (SCA_PORTAL_URL / SCA_API_USER / SCA_API_KEY) --
+        showing Meraki alerts only.
+      </div>
+    </div>
+  </div>
+
+  <div class="section-panel" id="section-firmware">
+    <div class="empty" id="firmware-no-network-note" style="display:none;">Select a network above to view its firmware status.</div>
+    <div class="panel" id="firmware-panel" style="display:none;">
+      <h2><span class="legend-dot" style="background:var(--accent)"></span> Firmware -- <span id="firmware-network-name"></span></h2>
+      <div class="table-wrap">
+        <table id="firmware-table">
+          <thead><tr><th>Device type</th><th>Current version</th><th>Status</th><th>Scheduled upgrade</th><th></th></tr></thead>
+          <tbody><tr><td colspan="5" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-panel" id="section-map">
+    <div class="empty" id="map-no-network-note" style="display:none;">Select a network above to view its topology.</div>
+    <div class="panel" id="map-panel" style="display:none;">
+      <h2><span class="legend-dot" style="background:var(--accent)"></span> Network Map -- <span id="map-network-name"></span></h2>
+      <div id="map-svg-wrap"></div>
+    </div>
+  </div>
+
+  <div class="section-panel" id="section-dns">
+
+  <header class="top">
+    <div>
+      <h1><span class="pulse-dot"></span> Umbrella Activity</h1>
+      <div class="subtitle" id="subtitle">What your network is doing, right now.</div>
+      <div class="data-age" id="data-age" style="display:none;"></div>
+    </div>
+    <div class="range-pills" id="range-pills"></div>
+  </header>
+
+  <div class="filters">
+    <div class="filter-group">
+      <span>Identity</span>
+      <div class="dropdown" id="identity-dropdown">
+        <button class="multi-btn" id="identity-btn">All identities</button>
+        <div class="dropdown-panel" id="identity-panel"><div class="empty-note">Loading...</div></div>
+      </div>
+      <span class="count-note" id="identity-load-count"></span>
+    </div>
+    <div class="filter-group">
+      <span>Verdict</span>
+      <select id="verdict-select">
+        <option value="">All</option>
+        <option value="allowed">Allowed only</option>
+        <option value="blocked">Blocked only</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <span>Category</span>
+      <div class="dropdown" id="category-dropdown">
+        <button class="multi-btn" id="category-btn">All categories</button>
+        <div class="dropdown-panel" id="category-panel"><div class="empty-note">Load data first</div></div>
+      </div>
+    </div>
+    <div class="dropdown" id="preset-dropdown">
+      <button class="multi-btn" id="preset-btn">Presets</button>
+      <div class="dropdown-panel" id="preset-panel" style="min-width:260px;"></div>
+    </div>
+    <button id="fetch-btn" title="Fetch activity for the selected filters" disabled>Fetch</button>
+    <button id="cancel-fetch-btn" title="Cancel the in-progress fetch" style="display:none;">Cancel</button>
+  </div>
+
+  <div class="cards" id="summary-cards">
+    <div class="card"><div class="label">Total requests</div><div class="value" id="stat-total">—</div></div>
+    <div class="card"><div class="label">Unique destinations</div><div class="value" id="stat-unique">—</div></div>
+    <div class="card"><div class="label">Allowed</div><div class="value allowed" id="stat-allowed">—</div></div>
+    <div class="card"><div class="label">Blocked</div><div class="value blocked" id="stat-blocked">—</div></div>
+    <div class="card"><div class="label">Top category</div><div class="value" id="stat-top-category" style="font-size:1.1rem;">—</div></div>
+  </div>
+
+  <div class="panel" id="top-blocked-panel" style="display:none;">
+    <h2><span class="legend-dot" style="background:var(--blocked)"></span> Top blocked destinations</h2>
+    <div id="top-blocked-list"></div>
+  </div>
+
+  <div class="panel">
+    <h2><span class="legend-dot" style="background:var(--allowed)"></span> Allowed <span class="legend-dot" style="background:var(--blocked)"></span> Blocked — requests over time</h2>
+    <div class="chart-wrap"><canvas id="chart"></canvas></div>
+  </div>
+
+  <div class="panel">
+    <div class="tabs">
+      <div class="tab active" data-tab="destinations">Destinations</div>
+      <div class="tab" data-tab="categories">Categories</div>
+      <div class="tab" data-tab="ip">By IP</div>
+      <div class="tab" data-tab="identity">By Identity</div>
+    </div>
+
+    <div class="tab-content active" id="tab-destinations">
+      <div class="table-toolbar">
+        <input type="text" id="dest-search" placeholder="Filter by destination or category...">
+        <button class="clear-btn" id="dest-search-clear" style="display:none;">Clear</button>
+        <span class="count-note" id="dest-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="dest-table">
+          <thead>
+            <tr>
+              <th data-key="destination">Destination</th>
+              <th data-key="category">Category</th>
+              <th data-key="total">Total</th>
+              <th data-key="allowed">Allowed</th>
+              <th data-key="blocked">Blocked</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-categories">
+      <div class="table-toolbar">
+        <input type="text" id="cat-search" placeholder="Filter by category...">
+        <button class="clear-btn" id="cat-search-clear" style="display:none;">Clear</button>
+        <span class="count-note" id="cat-count"></span>
+      </div>
+      <div class="table-wrap">
+        <table id="cat-table">
+          <thead>
+            <tr>
+              <th data-key="category">Category</th>
+              <th data-key="total">Total</th>
+              <th data-key="allowed">Allowed</th>
+              <th data-key="blocked">Blocked</th>
+              <th data-key="pct_of_total">% of traffic</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-ip">
+      <div id="domain-mode-banner" class="domain-banner" style="display:none;"></div>
+      <div class="table-toolbar">
+        <div class="dropdown" id="ip-dropdown" style="flex:1; max-width:320px;">
+          <input type="text" id="ip-search-input" placeholder="Enter an internal IP address..." autocomplete="off">
+          <div class="dropdown-panel" id="ip-suggestions-panel"></div>
+        </div>
+        <button id="ip-search-btn">Search</button>
+        <button class="clear-btn" id="ip-search-clear" style="display:none;">Clear</button>
+        <span class="count-note" id="ip-count"></span>
+        <button id="ip-view-client-btn" style="display:none;">View Client Info</button>
+      </div>
+      <div id="ip-empty" class="empty-note" style="padding:24px 4px;">
+        Fetch data for a time range above, then search for an internal IP to see every request it made.
+      </div>
+      <div class="table-wrap" id="ip-table-wrap" style="display:none;">
+        <table id="ip-table">
+          <thead>
+            <tr>
+              <th data-key="timestamp">Time</th>
+              <th data-key="destination">Destination</th>
+              <th data-key="category">Category</th>
+              <th data-key="verdict">Verdict</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="tab-content" id="tab-identity">
+      <div class="table-toolbar">
+        <div class="dropdown" id="identity-search-dropdown" style="flex:1; max-width:320px;">
+          <input type="text" id="identity-search-input" placeholder="Enter or select an identity..." autocomplete="off">
+          <div class="dropdown-panel" id="identity-search-suggestions-panel"></div>
+        </div>
+        <button id="identity-search-btn">Search</button>
+        <button class="clear-btn" id="identity-search-clear" style="display:none;">Clear</button>
+        <span class="count-note" id="identity-search-count"></span>
+      </div>
+      <div id="identity-search-empty" class="empty-note" style="padding:24px 4px;">
+        Fetch data for a time range above, then search for an identity to see every request it made.
+      </div>
+      <div class="table-wrap" id="identity-search-table-wrap" style="display:none;">
+        <table id="identity-search-table">
+          <thead>
+            <tr>
+              <th data-key="timestamp">Time</th>
+              <th data-key="internal_ip">Internal IP</th>
+              <th data-key="destination">Destination</th>
+              <th data-key="category">Category</th>
+              <th data-key="verdict">Verdict</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  </div>
+
+</div>
+
+<div id="global-tooltip"></div>
+
+<div class="modal-overlay" id="client-info-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Client info — <span class="modal-ip" id="client-info-ip"></span></h3>
+      <button class="modal-close-btn" id="client-info-close">✕</button>
+    </div>
+    <div class="modal-body" id="client-info-body">
+      <div class="empty-note">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="firmware-modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>Schedule Firmware Upgrade</h3>
+      <button class="modal-close-btn" id="firmware-modal-close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-field"><span class="modal-label">Network</span><span class="modal-value" id="fw-modal-network"></span></div>
+      <div class="modal-field"><span class="modal-label">Device type</span><span class="modal-value" id="fw-modal-product"></span></div>
+      <div class="modal-field"><span class="modal-label">Current version</span><span class="modal-value" id="fw-modal-current"></span></div>
+      <div class="modal-field"><span class="modal-label">Target version</span><select id="fw-modal-version"></select></div>
+      <div class="modal-field"><span class="modal-label">Scheduled for</span><input type="datetime-local" id="fw-modal-time"></div>
+      <div class="modal-footnote fw-warning">
+        ⚠ Devices of this type will reboot during the upgrade window. This cannot be undone once the window starts.
+      </div>
+      <div class="fw-modal-actions">
+        <button class="clear-btn" id="fw-modal-cancel-btn">Cancel</button>
+        <button id="fw-modal-confirm-btn">Confirm Schedule</button>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+const RANGES = {{ ranges|tojson }};
+const DEFAULT_RANGE = {{ default_range|tojson }};
+const RANGE_LABELS = {"1h":"Last hour","6h":"Last 6 hours","12h":"Last 12 hours","24h":"Last 24 hours","7d":"Last 7 days","30d":"Last 30 days"};
+
+let state = {
+  range: DEFAULT_RANGE,
+  identityIds: [],
+  verdict: "",
+  categories: [],
+};
+let destRows = [];
+let catRows = [];
+let ipRows = [];
+let ipSuggestionsList = [];
+let ipTabMode = "ip"; // "ip" (search by IP) | "domain" (clicked through from a destination)
+
+let identitySearchRows = [];
+let identitySuggestionsList = []; // [{id,label,type}, ...] from available_identities_in_data
+let selectedIdentitySearchId = null;
+let identitySearchSort = {key: "timestamp", dir: -1};
+let destSort = {key:"total", dir:-1};
+let catSort = {key:"total", dir:-1};
+let ipSort = {key:"timestamp", dir:-1};
+let chart = null;
+let dataFetchedAt = null; // unix seconds (from server) of when the currently shown data was actually pulled from Umbrella
+let dataCacheTtlSeconds = null;
+let dataAgeIntervalId = null;
+
+function renderRangePills(){
+  const container = document.getElementById("range-pills");
+  container.innerHTML = RANGES.map(r =>
+    `<button class="pill ${r === state.range ? "active" : ""}" data-range="${r}">${RANGE_LABELS[r] || r}</button>`
+  ).join("");
+  container.querySelectorAll(".pill").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.range = btn.dataset.range;
+      renderRangePills();
+    });
+  });
+}
+
+async function loadIdentities(){
+  const panel = document.getElementById("identity-panel");
+  const fetchBtn = document.getElementById("fetch-btn");
+  const countEl = document.getElementById("identity-load-count");
+  fetchBtn.disabled = true;
+  countEl.textContent = "Loading...";
+  try {
+    const resp = await fetch("/api/identities");
+    const data = await resp.json();
+    if (data.error) {
+      panel.innerHTML = `<div class="empty-note" style="color:var(--blocked);">${data.error}</div>`;
+      countEl.textContent = "Failed to load identities";
+      countEl.style.color = "var(--blocked)";
+      return;
+    }
+    if (!data.identities.length) {
+      panel.innerHTML = `<div class="empty-note">No identities found.</div>`;
+      countEl.textContent = "0 identities loaded";
+      countEl.style.color = "";
+      return;
+    }
+    panel.innerHTML = data.identities.map(id => `
+      <label><input type="checkbox" value="${id.id}" data-role="identity-check"> ${id.label} <span style="color:var(--muted);">(${id.type || "unknown"})</span></label>
+    `).join("");
+    panel.querySelectorAll("[data-role=identity-check]").forEach(cb => {
+      cb.addEventListener("change", () => {
+        state.identityIds = Array.from(panel.querySelectorAll("[data-role=identity-check]:checked")).map(el => el.value);
+        updateIdentityButtonLabel();
+      });
+    });
+    countEl.textContent = `${data.identities.length} identit${data.identities.length === 1 ? "y" : "ies"} loaded`;
+    countEl.style.color = "";
+  } catch (e) {
+    panel.innerHTML = `<div class="empty-note" style="color:var(--blocked);">Failed to load: ${e}</div>`;
+    countEl.textContent = "Failed to load identities";
+    countEl.style.color = "var(--blocked)";
+  } finally {
+    fetchBtn.disabled = false;
+  }
+}
+
+function updateIdentityButtonLabel(){
+  const btn = document.getElementById("identity-btn");
+  btn.textContent = state.identityIds.length ? `${state.identityIds.length} identity(s)` : "All identities";
+}
+
+function syncIdentityCheckboxes(){
+  document.querySelectorAll("#identity-panel [data-role=identity-check]").forEach(cb => {
+    cb.checked = state.identityIds.includes(cb.value);
+  });
+  updateIdentityButtonLabel();
+}
+
+function syncCategoryCheckboxes(){
+  document.querySelectorAll("#category-panel [data-role=cat-check]").forEach(cb => {
+    cb.checked = state.categories.includes(cb.value);
+  });
+  document.getElementById("category-btn").textContent =
+    state.categories.length ? `${state.categories.length} category(s)` : "All categories";
+}
+
+let savedPresets = [];
+
+async function loadPresets(){
+  try {
+    const resp = await fetch("/api/presets");
+    const data = await resp.json();
+    savedPresets = data.presets || [];
+  } catch (e) {
+    savedPresets = [];
+  }
+  renderPresetPanel();
+}
+
+function renderPresetPanel(){
+  const panel = document.getElementById("preset-panel");
+  const saveRowHtml = `
+    <div class="preset-save-row">
+      <input type="text" id="preset-name-input" placeholder="Save current filters as...">
+      <button id="preset-save-btn">Save</button>
+    </div>`;
+
+  const sortedPresets = [...savedPresets].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+  );
+
+  const listHtml = sortedPresets.length
+    ? sortedPresets.map(p => `
+        <div class="preset-item" data-id="${escapeHtml(p.id)}">
+          <span class="preset-name" data-action="apply" title="Click to apply this preset">${escapeHtml(p.name)}</span>
+          <button class="preset-item-btn" data-action="rename" title="Rename">✎</button>
+          <button class="preset-item-btn danger" data-action="delete" title="Delete">✕</button>
+        </div>
+      `).join("")
+    : `<div class="empty-note">No saved presets yet.</div>`;
+
+  panel.innerHTML = saveRowHtml + listHtml;
+
+  document.getElementById("preset-save-btn").addEventListener("click", saveCurrentAsPreset);
+  document.getElementById("preset-name-input").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); saveCurrentAsPreset(); }
+  });
+
+  panel.querySelectorAll(".preset-item").forEach(item => {
+    const preset = savedPresets.find(p => p.id === item.dataset.id);
+    if (!preset) return;
+    item.querySelector('[data-action="apply"]').addEventListener("click", () => applyPreset(preset));
+    item.querySelector('[data-action="rename"]').addEventListener("click", () => startRenamePreset(item, preset));
+    item.querySelector('[data-action="delete"]').addEventListener("click", () => deletePreset(preset));
+  });
+}
+
+async function saveCurrentAsPreset(){
+  const input = document.getElementById("preset-name-input");
+  const name = input.value.trim();
+  if (!name) { input.focus(); return; }
+
+  const saveBtn = document.getElementById("preset-save-btn");
+  saveBtn.disabled = true;
+  try {
+    const resp = await fetch("/api/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        range: state.range,
+        identity_ids: state.identityIds,
+        verdict: state.verdict || null,
+        categories: state.categories,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { showError(data.error); return; }
+    savedPresets.push(data.preset);
+    renderPresetPanel();
+  } catch (e) {
+    showError(`Failed to save preset: ${e}`);
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function applyPreset(preset){
+  state.range = preset.range;
+  state.identityIds = [...preset.identity_ids];
+  state.verdict = preset.verdict || "";
+  state.categories = [...preset.categories];
+
+  renderRangePills();
+  syncIdentityCheckboxes();
+  document.getElementById("verdict-select").value = state.verdict;
+  syncCategoryCheckboxes();
+
+  document.getElementById("preset-panel").classList.remove("open");
+  document.getElementById("subtitle").textContent = `Preset "${preset.name}" applied — click Fetch to load.`;
+}
+
+function startRenamePreset(item, preset){
+  const nameSpan = item.querySelector(".preset-name");
+  nameSpan.outerHTML = `<input type="text" class="preset-rename-input" value="${escapeHtml(preset.name)}">`;
+  const input = item.querySelector(".preset-rename-input");
+  input.focus();
+  input.select();
+
+  let settled = false;
+  const confirmRename = async () => {
+    if (settled) return;
+    settled = true;
+    const newName = input.value.trim();
+    if (!newName || newName === preset.name) { renderPresetPanel(); return; }
+    try {
+      const resp = await fetch(`/api/presets/${preset.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newName }),
+      });
+      const data = await resp.json();
+      if (data.error) { showError(data.error); renderPresetPanel(); return; }
+      const idx = savedPresets.findIndex(p => p.id === preset.id);
+      if (idx !== -1) savedPresets[idx] = data.preset;
+      renderPresetPanel();
+    } catch (e) {
+      showError(`Failed to rename preset: ${e}`);
+      renderPresetPanel();
+    }
+  };
+  const cancelRename = () => { settled = true; renderPresetPanel(); };
+
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); confirmRename(); }
+    if (e.key === "Escape") { e.preventDefault(); cancelRename(); }
+  });
+  input.addEventListener("blur", confirmRename);
+}
+
+async function deletePreset(preset){
+  if (!confirm(`Delete preset "${preset.name}"?`)) return;
+  try {
+    const resp = await fetch(`/api/presets/${preset.id}`, { method: "DELETE" });
+    const data = await resp.json();
+    if (data.error) { showError(data.error); return; }
+    savedPresets = savedPresets.filter(p => p.id !== preset.id);
+    renderPresetPanel();
+  } catch (e) {
+    showError(`Failed to delete preset: ${e}`);
+  }
+}
+
+function setupDropdown(dropdownId, btnId){
+  const dropdown = document.getElementById(dropdownId);
+  const btn = document.getElementById(btnId);
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".dropdown-panel").forEach(p => { if (p !== dropdown.querySelector(".dropdown-panel")) p.classList.remove("open"); });
+    dropdown.querySelector(".dropdown-panel").classList.toggle("open");
+  });
+  document.addEventListener("click", (e) => {
+    if (!dropdown.contains(e.target)) dropdown.querySelector(".dropdown-panel").classList.remove("open");
+  });
+}
+
+function renderCategoryOptions(available){
+  const panel = document.getElementById("category-panel");
+  if (!available.length) {
+    panel.innerHTML = `<div class="empty-note">No categories in this window.</div>`;
+    return;
+  }
+  const selected = new Set(state.categories);
+  panel.innerHTML = available.map(cat => `
+    <label><input type="checkbox" value="${cat}" data-role="cat-check" ${selected.has(cat) ? "checked" : ""}> ${cat}</label>
+  `).join("");
+  panel.querySelectorAll("[data-role=cat-check]").forEach(cb => {
+    cb.addEventListener("change", () => {
+      state.categories = Array.from(panel.querySelectorAll("[data-role=cat-check]:checked")).map(el => el.value);
+      document.getElementById("category-btn").textContent = state.categories.length ? `${state.categories.length} category(s)` : "All categories";
+    });
+  });
+}
+
+function showError(msg){
+  document.getElementById("error-container").innerHTML = `<div class="error-msg">${msg}</div>`;
+}
+function clearError(){
+  document.getElementById("error-container").innerHTML = "";
+}
+
+function resetDisplay(){
+  document.getElementById("stat-total").textContent = "—";
+  document.getElementById("stat-unique").textContent = "—";
+  document.getElementById("stat-allowed").textContent = "—";
+  document.getElementById("stat-blocked").textContent = "—";
+  document.getElementById("stat-top-category").textContent = "—";
+
+  if (chart) { chart.destroy(); chart = null; }
+
+  if (currentPollTimeoutId) { clearTimeout(currentPollTimeoutId); currentPollTimeoutId = null; }
+  currentJobId = null;
+
+  dataFetchedAt = null;
+  dataCacheTtlSeconds = null;
+  if (dataAgeIntervalId) { clearInterval(dataAgeIntervalId); dataAgeIntervalId = null; }
+  document.getElementById("data-age").style.display = "none";
+
+  document.getElementById("top-blocked-panel").style.display = "none";
+  document.getElementById("top-blocked-list").innerHTML = "";
+
+  destRows = [];
+  catRows = [];
+  document.querySelector("#dest-table tbody").innerHTML = "";
+  document.querySelector("#cat-table tbody").innerHTML = "";
+  document.getElementById("dest-count").textContent = "";
+  document.getElementById("cat-count").textContent = "";
+  document.getElementById("dest-search").value = "";
+  document.getElementById("cat-search").value = "";
+  document.getElementById("dest-search-clear").style.display = "none";
+  document.getElementById("cat-search-clear").style.display = "none";
+
+  document.getElementById("category-panel").innerHTML = `<div class="empty-note">Load data first</div>`;
+
+  ipRows = [];
+  ipSuggestionsList = [];
+  ipTabMode = "ip";
+  updateIpTableHeaders();
+  document.getElementById("domain-mode-banner").style.display = "none";
+  document.getElementById("ip-search-input").value = "";
+  document.getElementById("ip-search-clear").style.display = "none";
+  document.getElementById("ip-suggestions-panel").innerHTML = "";
+  document.getElementById("ip-suggestions-panel").classList.remove("open");
+  document.getElementById("ip-view-client-btn").style.display = "none";
+  document.querySelector("#ip-table tbody").innerHTML = "";
+  document.getElementById("ip-count").textContent = "";
+  document.getElementById("ip-table-wrap").style.display = "none";
+  document.getElementById("ip-empty").style.display = "block";
+  document.getElementById("ip-empty").textContent =
+    "Fetch data for a time range above, then search for an internal IP to see every request it made.";
+
+  identitySearchRows = [];
+  identitySuggestionsList = [];
+  selectedIdentitySearchId = null;
+  document.getElementById("identity-search-input").value = "";
+  document.getElementById("identity-search-clear").style.display = "none";
+  document.getElementById("identity-search-suggestions-panel").innerHTML = "";
+  document.getElementById("identity-search-suggestions-panel").classList.remove("open");
+  document.querySelector("#identity-search-table tbody").innerHTML = "";
+  document.getElementById("identity-search-count").textContent = "";
+  document.getElementById("identity-search-table-wrap").style.display = "none";
+  document.getElementById("identity-search-empty").style.display = "block";
+  document.getElementById("identity-search-empty").textContent =
+    "Fetch data for a time range above, then search for an identity to see every request it made.";
+
+  clearError();
+}
+
+let currentJobId = null;
+let currentPollTimeoutId = null;
+
+function applyActivityPayload(data){
+  renderSummary(data.summary);
+  renderChart(data.timeseries);
+  destRows = data.destinations;
+  catRows = data.category_breakdown;
+  renderDestTable();
+  renderCatTable();
+  renderTopBlocked();
+  renderCategoryOptions(data.available_categories);
+  renderIpSuggestions(data.available_internal_ips);
+  renderIdentitySearchSuggestions(data.available_identities_in_data);
+  document.getElementById("subtitle").textContent =
+    `${data.filtered_event_count.toLocaleString()} of ${data.raw_event_count.toLocaleString()} requests shown — ${RANGE_LABELS[data.range] || data.range}`;
+
+  dataFetchedAt = data.fetched_at;
+  dataCacheTtlSeconds = data.cache_ttl_seconds;
+  updateDataAgeIndicator();
+  if (dataAgeIntervalId) clearInterval(dataAgeIntervalId);
+  dataAgeIntervalId = setInterval(updateDataAgeIndicator, 15000);
+}
+
+function finishFetchUI(){
+  document.getElementById("fetch-btn").disabled = false;
+  document.getElementById("cancel-fetch-btn").style.display = "none";
+  currentJobId = null;
+  if (currentPollTimeoutId) { clearTimeout(currentPollTimeoutId); currentPollTimeoutId = null; }
+}
+
+async function pollJob(jobId){
+  // Guard against a stale poll (e.g. from a job that was since cancelled
+  // and superseded) still resolving and overwriting newer UI state.
+  if (jobId !== currentJobId) return;
+
+  try {
+    const resp = await fetch(`/api/activity/poll/${jobId}`);
+    const data = await resp.json();
+
+    if (jobId !== currentJobId) return; // re-check after the await
+
+    if (data.status === "running") {
+      currentPollTimeoutId = setTimeout(() => pollJob(jobId), 700);
+      return;
+    }
+    if (data.status === "cancelled") {
+      resetDisplay();
+      document.getElementById("subtitle").textContent =
+        "Fetch cancelled. Select a time range and click Fetch to try again.";
+      finishFetchUI();
+      return;
+    }
+    if (data.status === "error") {
+      showError(data.error);
+      document.getElementById("subtitle").textContent = "Failed to load.";
+      finishFetchUI();
+      return;
+    }
+    // status === "done"
+    applyActivityPayload(data);
+    finishFetchUI();
+  } catch (e) {
+    if (jobId !== currentJobId) return;
+    showError(`Failed to load activity: ${e}`);
+    document.getElementById("subtitle").textContent = "Failed to load.";
+    finishFetchUI();
+  }
+}
+
+async function loadActivity(refresh){
+  resetDisplay();
+  const params = new URLSearchParams();
+  params.set("range", state.range);
+  if (state.identityIds.length) params.set("identity_ids", state.identityIds.join(","));
+  if (state.verdict) params.set("verdict", state.verdict);
+  if (state.categories.length) params.set("categories", state.categories.join(","));
+  if (refresh) params.set("refresh", "1");
+
+  const fetchBtn = document.getElementById("fetch-btn");
+  const cancelBtn = document.getElementById("cancel-fetch-btn");
+  fetchBtn.disabled = true;
+  cancelBtn.style.display = "inline-block";
+  document.getElementById("subtitle").textContent = "Loading...";
+
+  try {
+    const resp = await fetch(`/api/activity/start?${params.toString()}`, { method: "POST" });
+    const data = await resp.json();
+    if (data.error) {
+      showError(data.error);
+      document.getElementById("subtitle").textContent = "Failed to load.";
+      finishFetchUI();
+      return;
+    }
+    currentJobId = data.job_id;
+    pollJob(currentJobId);
+  } catch (e) {
+    showError(`Failed to start fetch: ${e}`);
+    document.getElementById("subtitle").textContent = "Failed to load.";
+    finishFetchUI();
+  }
+}
+
+function cancelFetch(){
+  if (!currentJobId) return;
+  const jobIdToCancel = currentJobId;
+
+  // Reset the UI immediately -- don't wait on the network round-trip to
+  // the cancel endpoint. The pollJob guard (jobId !== currentJobId) means
+  // any poll already in flight for this job will just no-op when it
+  // resolves, so nulling currentJobId here is safe.
+  resetDisplay();
+  document.getElementById("subtitle").textContent =
+    "Fetch cancelled. Select a time range and click Fetch to try again.";
+  finishFetchUI();
+
+  // Tell the backend to actually stop the in-progress Umbrella pull.
+  // Fire-and-forget: whether or not this succeeds, the UI has already
+  // moved on: worst case (e.g. this request fails to reach the server)
+  // the backend job just runs to completion unseen, same as before.
+  fetch(`/api/activity/cancel/${jobIdToCancel}`, { method: "POST" }).catch(() => {});
+}
+
+function renderIpSuggestions(ips){
+  ipSuggestionsList = ips || [];
+  document.getElementById("ip-empty").textContent =
+    ipSuggestionsList.length
+      ? `Enter an internal IP (${ipSuggestionsList.length} seen in this window) and click Search.`
+      : "No internal IPs found in this window.";
+}
+
+function updateIpSuggestionsPanel(){
+  const input = document.getElementById("ip-search-input");
+  const panel = document.getElementById("ip-suggestions-panel");
+  const q = input.value.trim().toLowerCase();
+  const matches = ipSuggestionsList.filter(ip => !q || ip.toLowerCase().includes(q)).slice(0, 50);
+
+  if (!ipSuggestionsList.length) {
+    panel.innerHTML = `<div class="empty-note">Fetch data first to see available IPs.</div>`;
+  } else if (!matches.length) {
+    panel.innerHTML = `<div class="empty-note">No matching IPs.</div>`;
+  } else {
+    panel.innerHTML = matches.map(ip => `<div class="ip-option" data-ip="${escapeHtml(ip)}">${escapeHtml(ip)}</div>`).join("");
+    panel.querySelectorAll(".ip-option").forEach(opt => {
+      opt.addEventListener("click", () => {
+        input.value = opt.dataset.ip;
+        panel.classList.remove("open");
+      });
+    });
+  }
+}
+
+function renderIdentitySearchSuggestions(identities){
+  identitySuggestionsList = identities || [];
+  document.getElementById("identity-search-empty").textContent =
+    identitySuggestionsList.length
+      ? `Enter or select an identity (${identitySuggestionsList.length} seen in this window) and click Search.`
+      : "No identities found in this window.";
+}
+
+function updateIdentitySearchSuggestionsPanel(){
+  const input = document.getElementById("identity-search-input");
+  const panel = document.getElementById("identity-search-suggestions-panel");
+  const q = input.value.trim().toLowerCase();
+  const matches = identitySuggestionsList.filter(i => !q || i.label.toLowerCase().includes(q)).slice(0, 50);
+
+  if (!identitySuggestionsList.length) {
+    panel.innerHTML = `<div class="empty-note">Fetch data first to see available identities.</div>`;
+  } else if (!matches.length) {
+    panel.innerHTML = `<div class="empty-note">No matching identities.</div>`;
+  } else {
+    panel.innerHTML = matches.map(i => `
+      <div class="ip-option" data-id="${escapeHtml(String(i.id))}" data-label="${escapeHtml(i.label)}">
+        ${escapeHtml(i.label)} <span style="color:var(--muted); font-size:0.72rem;">(${escapeHtml(i.type || "unknown")})</span>
+      </div>
+    `).join("");
+    panel.querySelectorAll(".ip-option").forEach(opt => {
+      opt.addEventListener("click", () => {
+        input.value = opt.dataset.label;
+        selectedIdentitySearchId = opt.dataset.id;
+        panel.classList.remove("open");
+      });
+    });
+  }
+}
+
+function resolveIdentitySearchId(){
+  const typed = document.getElementById("identity-search-input").value.trim().toLowerCase();
+  if (!typed) return null;
+  const match = identitySuggestionsList.find(i => i.label.toLowerCase() === typed);
+  return match ? String(match.id) : null;
+}
+
+function updateIpTableHeaders(){
+  const secondTh = document.querySelector('#ip-table th[data-key="destination"], #ip-table th[data-key="internal_ip"]');
+  if (ipTabMode === "domain") {
+    secondTh.dataset.key = "internal_ip";
+    secondTh.textContent = "Internal IP";
+  } else {
+    secondTh.dataset.key = "destination";
+    secondTh.textContent = "Destination";
+  }
+}
+
+function exitDomainMode(){
+  if (ipTabMode !== "domain") return;
+  ipTabMode = "ip";
+  updateIpTableHeaders();
+  document.getElementById("domain-mode-banner").style.display = "none";
+}
+
+function clearIpSearch(){
+  document.getElementById("ip-search-input").value = "";
+  document.getElementById("ip-search-clear").style.display = "none";
+  document.getElementById("ip-view-client-btn").style.display = "none";
+  ipRows = [];
+  document.querySelector("#ip-table tbody").innerHTML = "";
+  document.getElementById("ip-count").textContent = "";
+  document.getElementById("ip-table-wrap").style.display = "none";
+  document.getElementById("ip-empty").style.display = "block";
+  document.getElementById("ip-empty").textContent =
+    ipSuggestionsList.length
+      ? `Enter an internal IP (${ipSuggestionsList.length} seen in this window) and click Search.`
+      : "Fetch data for a time range above, then search for an internal IP to see every request it made.";
+}
+
+function clearIdentitySearch(){
+  document.getElementById("identity-search-input").value = "";
+  document.getElementById("identity-search-clear").style.display = "none";
+  selectedIdentitySearchId = null;
+  identitySearchRows = [];
+  document.querySelector("#identity-search-table tbody").innerHTML = "";
+  document.getElementById("identity-search-count").textContent = "";
+  document.getElementById("identity-search-table-wrap").style.display = "none";
+  document.getElementById("identity-search-empty").style.display = "block";
+  document.getElementById("identity-search-empty").textContent =
+    identitySuggestionsList.length
+      ? `Enter or select an identity (${identitySuggestionsList.length} seen in this window) and click Search.`
+      : "Fetch data for a time range above, then search for an identity to see every request it made.";
+}
+
+function formatMerakiTimestamp(isoString){
+  if (!isoString) return null;
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return null;
+  return d.toLocaleString("en-AU", {
+    timeZone: "Australia/Perth", year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+}
+
+function closeClientInfoModal(){
+  document.getElementById("client-info-overlay").classList.remove("open");
+}
+
+async function openClientInfoModal(ip){
+  const overlay = document.getElementById("client-info-overlay");
+  const body = document.getElementById("client-info-body");
+  document.getElementById("client-info-ip").textContent = ip;
+  body.innerHTML = `<div class="empty-note">Loading from Meraki...</div>`;
+  overlay.classList.add("open");
+
+  try {
+    const resp = await fetch(`/api/client-info?ip=${encodeURIComponent(ip)}`);
+    const data = await resp.json();
+
+    // The modal may have been closed (or reopened for a different IP)
+    // while this was in flight -- don't clobber it with a stale result.
+    if (document.getElementById("client-info-ip").textContent !== ip) return;
+
+    if (data.error) {
+      body.innerHTML = `<div class="empty-note" style="color:var(--blocked);">${escapeHtml(data.error)}</div>`;
+      return;
+    }
+
+    const fields = [
+      ["Client Description", data.description],
+      ["MAC Address", data.mac],
+      ["Policy", data.policy],
+      ["Status", data.status],
+      ["Device Type & OS", data.device_type_os],
+      ["Network", data.network_name],
+      ["First Seen", formatMerakiTimestamp(data.first_seen)],
+      ["Last Seen", formatMerakiTimestamp(data.last_seen)],
+    ];
+
+    let html = fields.map(([label, value]) => `
+      <div class="modal-field">
+        <span class="modal-label">${escapeHtml(label)}</span>
+        <span class="modal-value">${escapeHtml(value ?? "Unknown")}</span>
+      </div>
+    `).join("");
+
+    const connection = data.connection || {};
+    const connectionDetails = Object.entries(connection.details || {});
+    if (connection.type && connectionDetails.length) {
+      html += `<div class="modal-section-title">${escapeHtml(connection.type)} connection</div>`;
+      html += connectionDetails.map(([label, value]) => `
+        <div class="modal-field">
+          <span class="modal-label">${escapeHtml(label)}</span>
+          <span class="modal-value">${escapeHtml(String(value))}</span>
+        </div>
+      `).join("");
+    }
+
+    const additionalEntries = Object.entries(data.additional || {});
+    if (additionalEntries.length) {
+      html += `<div class="modal-section-title">Additional details</div>`;
+      html += additionalEntries.map(([label, value]) => `
+        <div class="modal-field">
+          <span class="modal-label">${escapeHtml(label)}</span>
+          <span class="modal-value">${escapeHtml(String(value))}</span>
+        </div>
+      `).join("");
+    }
+
+    const ageSeconds = Math.max(0, (Date.now() / 1000) - data.fetched_at);
+    const ageMinutes = Math.floor(ageSeconds / 60);
+    const ageLabel = data.cached
+      ? `Cached result, fetched ${ageMinutes < 1 ? "just now" : ageMinutes + " minute" + (ageMinutes === 1 ? "" : "s") + " ago"}.`
+      : "Freshly fetched from Meraki just now.";
+    html += `<div class="modal-footnote">${ageLabel}</div>`;
+
+    body.innerHTML = html;
+  } catch (e) {
+    if (document.getElementById("client-info-ip").textContent !== ip) return;
+    body.innerHTML = `<div class="empty-note" style="color:var(--blocked);">Failed to load: ${escapeHtml(String(e))}</div>`;
+  }
+}
+
+function filterDestinationsByCategory(category){
+  switchToTab("destinations");
+  const input = document.getElementById("dest-search");
+  input.value = category;
+  document.getElementById("dest-search-clear").style.display = "inline-block";
+  renderDestTable();
+}
+
+async function showDomainRequests(domain){
+  switchToTab("ip");
+  exitDomainMode(); // reset first in case a previous domain lookup is active
+  ipTabMode = "domain";
+  updateIpTableHeaders();
+  ipSort = {key: "timestamp", dir: -1};
+  document.getElementById("ip-view-client-btn").style.display = "none";
+
+  const banner = document.getElementById("domain-mode-banner");
+  banner.style.display = "flex";
+  banner.innerHTML = `<span>Showing requests to <strong>${escapeHtml(domain)}</strong></span>
+    <button id="domain-mode-clear">✕ Clear</button>`;
+  document.getElementById("domain-mode-clear").addEventListener("click", () => {
+    exitDomainMode();
+    clearIpSearch();
+  });
+
+  const emptyEl = document.getElementById("ip-empty");
+  const wrapEl = document.getElementById("ip-table-wrap");
+  emptyEl.style.display = "block";
+  wrapEl.style.display = "none";
+  emptyEl.textContent = "Searching...";
+  clearError();
+
+  try {
+    const params = new URLSearchParams();
+    params.set("range", state.range);
+    if (state.identityIds.length) params.set("identity_ids", state.identityIds.join(","));
+    params.set("domain", domain);
+
+    const resp = await fetch(`/api/domain-activity?${params.toString()}`);
+    const data = await resp.json();
+    if (data.error) {
+      showError(data.error);
+      emptyEl.textContent = "Search failed.";
+      return;
+    }
+    ipRows = data.requests;
+    if (!ipRows.length) {
+      emptyEl.style.display = "block";
+      wrapEl.style.display = "none";
+      emptyEl.textContent = `No requests found to ${escapeHtml(domain)} in this window.`;
+    } else {
+      emptyEl.style.display = "none";
+      wrapEl.style.display = "block";
+      renderIpTable();
+    }
+  } catch (e) {
+    showError(`Domain lookup failed: ${e}`);
+    emptyEl.textContent = "Search failed.";
+  }
+}
+
+async function searchIp(){
+  const input = document.getElementById("ip-search-input");
+  const ip = input.value.trim();
+  if (!ip) return;
+
+  exitDomainMode();
+
+  const btn = document.getElementById("ip-search-btn");
+  const viewClientBtn = document.getElementById("ip-view-client-btn");
+  btn.disabled = true;
+  viewClientBtn.style.display = "none";
+  const emptyEl = document.getElementById("ip-empty");
+  const wrapEl = document.getElementById("ip-table-wrap");
+  emptyEl.style.display = "block";
+  wrapEl.style.display = "none";
+  emptyEl.textContent = "Searching...";
+  clearError();
+
+  try {
+    const params = new URLSearchParams();
+    params.set("range", state.range);
+    if (state.identityIds.length) params.set("identity_ids", state.identityIds.join(","));
+    params.set("ip", ip);
+
+    const resp = await fetch(`/api/ip-activity?${params.toString()}`);
+    const data = await resp.json();
+    if (data.error) {
+      showError(data.error);
+      emptyEl.textContent = "Search failed.";
+      return;
+    }
+    ipRows = data.requests;
+    if (!ipRows.length) {
+      emptyEl.style.display = "block";
+      wrapEl.style.display = "none";
+      emptyEl.textContent = `No requests found from ${escapeHtml(ip)} in this window.`;
+    } else {
+      emptyEl.style.display = "none";
+      wrapEl.style.display = "block";
+      renderIpTable();
+      viewClientBtn.dataset.ip = ip;
+      viewClientBtn.style.display = "inline-block";
+    }
+    document.getElementById("ip-search-clear").style.display = "inline-block";
+  } catch (e) {
+    showError(`IP search failed: ${e}`);
+    emptyEl.textContent = "Search failed.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function searchIdentity(){
+  const input = document.getElementById("identity-search-input");
+  const typedLabel = input.value.trim();
+  if (!typedLabel) return;
+
+  // Prefer an explicit dropdown selection; fall back to resolving the
+  // typed text against the known identity labels for this window.
+  let identityId = selectedIdentitySearchId;
+  const resolvedFromText = resolveIdentitySearchId();
+  if (resolvedFromText !== null) identityId = resolvedFromText;
+
+  if (identityId === null) {
+    showError(`"${escapeHtml(typedLabel)}" doesn't match any identity seen in this window -- pick one from the suggestions.`);
+    return;
+  }
+
+  const btn = document.getElementById("identity-search-btn");
+  btn.disabled = true;
+  const emptyEl = document.getElementById("identity-search-empty");
+  const wrapEl = document.getElementById("identity-search-table-wrap");
+  emptyEl.style.display = "block";
+  wrapEl.style.display = "none";
+  emptyEl.textContent = "Searching...";
+  clearError();
+
+  try {
+    const params = new URLSearchParams();
+    params.set("range", state.range);
+    if (state.identityIds.length) params.set("identity_ids", state.identityIds.join(","));
+    params.set("identity", identityId);
+
+    const resp = await fetch(`/api/identity-activity?${params.toString()}`);
+    const data = await resp.json();
+    if (data.error) {
+      showError(data.error);
+      emptyEl.textContent = "Search failed.";
+      return;
+    }
+    identitySearchRows = data.requests;
+    if (!identitySearchRows.length) {
+      emptyEl.style.display = "block";
+      wrapEl.style.display = "none";
+      emptyEl.textContent = `No requests found for ${escapeHtml(typedLabel)} in this window.`;
+    } else {
+      emptyEl.style.display = "none";
+      wrapEl.style.display = "block";
+      renderIdentitySearchTable();
+    }
+    document.getElementById("identity-search-clear").style.display = "inline-block";
+  } catch (e) {
+    showError(`Identity search failed: ${e}`);
+    emptyEl.textContent = "Search failed.";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderIdentitySearchTable(){
+  let rows = sortRows(identitySearchRows, identitySearchSort);
+  document.getElementById("identity-search-count").textContent = `${rows.length.toLocaleString()} requests`;
+  const tbody = document.querySelector("#identity-search-table tbody");
+  tbody.innerHTML = rows.map(r => {
+    const timeLabel = r.timestamp
+      ? new Date(r.timestamp).toLocaleString("en-AU", {
+          timeZone: "Australia/Perth", year: "numeric", month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+        })
+      : "—";
+    const badgeClass = r.verdict === "Blocked" ? "blocked" : "allowed";
+    return `
+    <tr>
+      <td class="num" style="text-align:left;">${timeLabel}</td>
+      <td class="domain clickable-ip" data-ip="${escapeHtml(r.internal_ip || "")}" title="Click to see Meraki client info">
+        <span class="truncate" data-tooltip="${escapeHtml(r.internal_ip || "")}">${escapeHtml(r.internal_ip || "")}</span>
+      </td>
+      <td class="domain clickable" data-domain="${escapeHtml(r.destination || "")}" title="Click to see which IPs requested this domain">
+        <span class="truncate" data-tooltip="${escapeHtml(r.destination || "")}">${escapeHtml(r.destination || "")}</span>
+      </td>
+      <td class="category"><span class="truncate" data-tooltip="${escapeHtml(r.category)}">${escapeHtml(r.category)}</span></td>
+      <td class="num"><span class="badge ${badgeClass}">${escapeHtml(r.verdict)}</span></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="empty">No requests match.</td></tr>`;
+  markTruncatedTips(tbody);
+}
+
+function updateDataAgeIndicator(){
+  const el = document.getElementById("data-age");
+  if (dataFetchedAt === null) {
+    el.style.display = "none";
+    return;
+  }
+
+  const ageSeconds = Math.max(0, (Date.now() / 1000) - dataFetchedAt);
+  let label;
+  if (ageSeconds < 60) {
+    label = "Data fetched just now";
+  } else {
+    const minutes = Math.floor(ageSeconds / 60);
+    label = `Data is ${minutes} minute${minutes === 1 ? "" : "s"} old`;
+  }
+
+  const isStale = dataCacheTtlSeconds !== null && ageSeconds >= dataCacheTtlSeconds;
+  if (isStale) {
+    label += " — next Fetch will pull fresh data";
+  }
+
+  el.innerHTML = `<span class="age-dot"></span>${label}`;
+  el.classList.toggle("stale", isStale);
+  el.style.display = "flex";
+}
+
+function renderSummary(s){
+  document.getElementById("stat-total").textContent = s.total_requests.toLocaleString();
+  document.getElementById("stat-unique").textContent = s.unique_destinations.toLocaleString();
+  document.getElementById("stat-allowed").textContent = `${s.allowed_requests.toLocaleString()} (${s.allowed_pct}%)`;
+  document.getElementById("stat-blocked").textContent = `${s.blocked_requests.toLocaleString()} (${s.blocked_pct}%)`;
+  document.getElementById("stat-top-category").textContent = s.top_category || "—";
+}
+
+function renderTopBlocked(){
+  const panel = document.getElementById("top-blocked-panel");
+  const list = document.getElementById("top-blocked-list");
+
+  // Derived entirely from destRows, already loaded for the Destinations tab --
+  // no extra fetch needed.
+  const top = destRows
+    .filter(r => r.blocked > 0)
+    .sort((a, b) => b.blocked - a.blocked)
+    .slice(0, 5);
+
+  if (!top.length) {
+    panel.style.display = "none";
+    list.innerHTML = "";
+    return;
+  }
+
+  panel.style.display = "block";
+  list.innerHTML = top.map((r, i) => `
+    <div class="blocked-item">
+      <div class="blocked-rank">${i + 1}</div>
+      <div class="blocked-item-main">
+        <span class="blocked-item-domain">${escapeHtml(r.destination)}</span>
+        <span class="blocked-item-category">${escapeHtml(r.category)}</span>
+      </div>
+      <div class="blocked-item-count">
+        ${r.blocked.toLocaleString()}
+        <span class="count-label">blocked</span>
+      </div>
+    </div>
+  `).join("");
+}
+
+function renderChart(timeseries){
+  const labels = timeseries.map(t => new Date(t.bucket_start).toLocaleString("en-AU", {
+    timeZone: "Australia/Perth", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"
+  }));
+  const allowed = timeseries.map(t => t.allowed);
+  const blocked = timeseries.map(t => t.blocked);
+
+  if (chart) chart.destroy();
+  const ctx = document.getElementById("chart").getContext("2d");
+  chart = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [
+        { label: "Allowed", data: allowed, backgroundColor: "#2DD4BF", stack: "s" },
+        { label: "Blocked", data: blocked, backgroundColor: "#F87171", stack: "s" },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#7C8CA6", maxRotation: 0, autoSkip: true }, grid: { color: "#1F2A3D" } },
+        y: { ticks: { color: "#7C8CA6" }, grid: { color: "#1F2A3D" }, beginAtZero: true },
+      },
+    },
+  });
+}
+
+function sortRows(rows, sortState){
+  const {key, dir} = sortState;
+  return [...rows].sort((a, b) => {
+    const av = a[key], bv = b[key];
+    if (typeof av === "string") return av.localeCompare(bv) * dir;
+    return (av - bv) * dir;
+  });
+}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+}
+
+function markTruncatedTips(container){
+  container.querySelectorAll(".truncate[data-tooltip]").forEach(el => {
+    if (el.scrollWidth > el.clientWidth) {
+      el.classList.add("has-tip");
+    } else {
+      el.classList.remove("has-tip");
+    }
+  });
+}
+
+// Global tooltip: rendered fixed-position and appended outside any
+// scrolling container, so it's never clipped by .table-wrap's overflow.
+// Positioned via getBoundingClientRect on hover, with a flip-to-above
+// fallback when there isn't room below the cell.
+const tooltipEl = document.getElementById("global-tooltip");
+
+function showTooltip(target){
+  tooltipEl.textContent = target.dataset.tooltip;
+  tooltipEl.style.top = "-9999px";
+  tooltipEl.style.left = "-9999px";
+  tooltipEl.classList.add("visible");
+
+  const rect = target.getBoundingClientRect();
+  const tipRect = tooltipEl.getBoundingClientRect();
+  const margin = 8;
+
+  let top = rect.bottom + margin;
+  if (top + tipRect.height > window.innerHeight) {
+    top = rect.top - tipRect.height - margin;
+  }
+  let left = rect.left;
+  if (left + tipRect.width > window.innerWidth) {
+    left = Math.max(margin, window.innerWidth - tipRect.width - margin);
+  }
+
+  tooltipEl.style.top = `${Math.max(margin, top)}px`;
+  tooltipEl.style.left = `${left}px`;
+}
+
+function hideTooltip(){
+  tooltipEl.classList.remove("visible");
+}
+
+document.body.addEventListener("mouseover", (e) => {
+  const target = e.target.closest(".has-tip");
+  if (target) showTooltip(target);
+});
+document.body.addEventListener("mouseout", (e) => {
+  const target = e.target.closest(".has-tip");
+  if (target) hideTooltip();
+});
+document.body.addEventListener("scroll", hideTooltip, true);
+
+function renderDestTable(){
+  const q = document.getElementById("dest-search").value.toLowerCase();
+  let rows = destRows.filter(r => !q || r.destination.toLowerCase().includes(q) || r.category.toLowerCase().includes(q));
+  rows = sortRows(rows, destSort);
+  document.getElementById("dest-count").textContent = `${rows.length.toLocaleString()} destinations`;
+  const tbody = document.querySelector("#dest-table tbody");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="domain clickable" data-domain="${escapeHtml(r.destination)}" title="Click to see which IPs requested this domain">
+        <span class="truncate" data-tooltip="${escapeHtml(r.destination)}">${escapeHtml(r.destination)}</span>
+      </td>
+      <td class="category"><span class="truncate" data-tooltip="${escapeHtml(r.category)}">${escapeHtml(r.category)}</span></td>
+      <td class="num">${r.total.toLocaleString()}</td>
+      <td class="num"><span class="badge allowed">${r.allowed.toLocaleString()}</span></td>
+      <td class="num"><span class="badge blocked">${r.blocked.toLocaleString()}</span></td>
+    </tr>
+  `).join("") || `<tr><td colspan="5" class="empty">No destinations match.</td></tr>`;
+  markTruncatedTips(tbody);
+}
+
+function renderCatTable(){
+  const q = document.getElementById("cat-search").value.toLowerCase();
+  let rows = catRows.filter(r => !q || r.category.toLowerCase().includes(q));
+  rows = sortRows(rows, catSort);
+  document.getElementById("cat-count").textContent = `${rows.length.toLocaleString()} categories`;
+  const tbody = document.querySelector("#cat-table tbody");
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td class="category clickable" data-category="${escapeHtml(r.category)}" title="Click to filter Destinations by this category">
+        <span class="truncate" data-tooltip="${escapeHtml(r.category)}">${escapeHtml(r.category)}</span>
+      </td>
+      <td class="num">${r.total.toLocaleString()}</td>
+      <td class="num"><span class="badge allowed">${r.allowed.toLocaleString()}</span></td>
+      <td class="num"><span class="badge blocked">${r.blocked.toLocaleString()}</span></td>
+      <td class="num">${r.pct_of_total}%</td>
+    </tr>
+  `).join("") || `<tr><td colspan="5" class="empty">No categories match.</td></tr>`;
+  markTruncatedTips(tbody);
+}
+
+function renderIpTable(){
+  let rows = sortRows(ipRows, ipSort);
+  document.getElementById("ip-count").textContent = `${rows.length.toLocaleString()} requests`;
+  const tbody = document.querySelector("#ip-table tbody");
+  const secondColKey = ipTabMode === "domain" ? "internal_ip" : "destination";
+  const secondColClickable = ipTabMode === "domain"; // only internal IPs are clickable, not destinations here
+  tbody.innerHTML = rows.map(r => {
+    const timeLabel = r.timestamp
+      ? new Date(r.timestamp).toLocaleString("en-AU", {
+          timeZone: "Australia/Perth", year: "numeric", month: "short", day: "numeric",
+          hour: "2-digit", minute: "2-digit", second: "2-digit",
+        })
+      : "—";
+    const badgeClass = r.verdict === "Blocked" ? "blocked" : "allowed";
+    const secondColValue = r[secondColKey] || "";
+    const secondColClass = secondColClickable ? "domain clickable-ip" : "domain";
+    const secondColAttrs = secondColClickable
+      ? `data-ip="${escapeHtml(secondColValue)}" title="Click to see Meraki client info"`
+      : "";
+    return `
+    <tr>
+      <td class="num" style="text-align:left;">${timeLabel}</td>
+      <td class="${secondColClass}" ${secondColAttrs}><span class="truncate" data-tooltip="${escapeHtml(secondColValue)}">${escapeHtml(secondColValue)}</span></td>
+      <td class="category"><span class="truncate" data-tooltip="${escapeHtml(r.category)}">${escapeHtml(r.category)}</span></td>
+      <td class="num"><span class="badge ${badgeClass}">${escapeHtml(r.verdict)}</span></td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="4" class="empty">No requests match.</td></tr>`;
+  markTruncatedTips(tbody);
+}
+
+// --- Network scoping: selector shared by Overview/Network Health/Security
+// Alerts/Firmware/Network Map. Deliberately independent of `state`
+// (the Umbrella range/identity/verdict/category filters) -- DNS Activity
+// keeps its own identity-based scoping and isn't affected by this at all.
+let selectedNetworkId = ""; // "" = all networks (org-wide)
+let networksById = {};
+
+async function loadNetworks(){
+  const select = document.getElementById("network-select");
+  try {
+    const resp = await fetch("/api/networks");
+    const data = await resp.json();
+    if (data.error) {
+      select.innerHTML = `<option value="">Failed to load</option>`;
+      return;
+    }
+    networksById = {};
+    (data.networks || []).forEach(n => { networksById[n.id] = n; });
+    select.innerHTML = [`<option value="">All networks</option>`]
+      .concat(data.networks.map(n => `<option value="${escapeHtml(n.id)}">${escapeHtml(n.name)}</option>`))
+      .join("");
+    selectedNetworkId = data.selected || "";
+    select.value = selectedNetworkId;
+    onNetworkChanged(false);
+  } catch (e) {
+    select.innerHTML = `<option value="">Failed to load</option>`;
+    console.error("Failed to load networks", e);
+  }
+}
+
+function onNetworkChanged(persist){
+  selectedNetworkId = document.getElementById("network-select").value;
+  if (persist) {
+    fetch("/api/network/select", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({network_id: selectedNetworkId || null}),
+    }).catch(e => console.error("Failed to persist network selection", e));
+  }
+  refreshNoc(true);
+  const activeTab = document.querySelector(".section-tab.active");
+  const activeSection = activeTab ? activeTab.dataset.section : "overview";
+  if (activeSection === "firmware") loadFirmware();
+  if (activeSection === "map") loadTopology();
+}
+
+document.getElementById("network-select").addEventListener("change", () => onNetworkChanged(true));
+
+// --- NOC: status strip, Overview, Network Health, Security Alerts ---
+// Backed by /api/noc/overview, /api/noc/alerts, /api/noc/network-health --
+// all three are cheap, server-cached GETs (NOC_CACHE_TTL_SECONDS, default
+// 60s), so it's simplest to refresh all three together rather than track
+// per-section staleness.
+const NOC_REFRESH_MS = 60000;
+let nocAlerts = [];
+let alertsSort = {key: "started_at", dir: -1};
+let alertsSourceFilter = "";
+let alertsStatusFilter = "";
+
+function severityBadge(sev){
+  const label = sev === "critical" ? "Critical" : sev === "warning" ? "Warning" : "Info";
+  return `<span class="badge severity-${escapeHtml(sev)}">${label}</span>`;
+}
+
+function sourceBadge(source){
+  const label = source === "meraki" ? "Meraki" : "Secure Cloud Analytics";
+  const cls = source === "meraki" ? "source-meraki" : "source-sca";
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+function alertLinkCell(a){
+  return a.link ? `<a class="alert-link" href="${escapeHtml(a.link)}" target="_blank" rel="noopener">Open ↗</a>` : "";
+}
+
+function formatAlertTime(isoString){
+  return formatMerakiTimestamp(isoString) || "—";
+}
+
+function renderStatusStrip(overview){
+  const wanTotal = overview.uplinks.healthy + overview.uplinks.down;
+  const wanDown = overview.uplinks.down;
+  document.getElementById("status-dot-wan").className = "status-dot " + (wanTotal === 0 ? "" : wanDown > 0 ? "critical" : "good");
+  document.getElementById("status-text-wan").textContent = wanTotal === 0 ? "No data" : (wanDown > 0 ? `${wanDown} down` : "Up");
+
+  const vpnTotal = overview.vpn.total_peers;
+  const vpnDown = overview.vpn.down_peers;
+  document.getElementById("status-dot-vpn").className = "status-dot " + (vpnTotal === 0 ? "" : vpnDown > 0 ? "critical" : "good");
+  document.getElementById("status-text-vpn").textContent = vpnTotal === 0 ? "None" : (vpnDown > 0 ? `${vpnDown}/${vpnTotal} down` : `${vpnTotal} up`);
+
+  const ds = overview.device_summary;
+  document.getElementById("status-dot-devices").className = "status-dot " + (!ds ? "" : ds.offline > 0 ? "warning" : "good");
+  document.getElementById("status-text-devices").textContent = ds ? `${ds.online}/${ds.total} online` : "No data";
+
+  const alertCount = overview.open_alert_count;
+  document.getElementById("status-dot-alerts").className = "status-dot " + (overview.critical_alert_count > 0 ? "critical" : alertCount > 0 ? "warning" : "good");
+  document.getElementById("status-text-alerts").textContent = String(alertCount);
+
+  const pip = document.getElementById("security-alert-pip");
+  if (alertCount > 0) { pip.style.display = "inline-block"; pip.textContent = String(alertCount); }
+  else { pip.style.display = "none"; }
+
+  document.getElementById("ov-uplinks").textContent = wanTotal === 0 ? "No data" : `${overview.uplinks.healthy} up${wanDown ? `, ${wanDown} down` : ""}`;
+  document.getElementById("ov-vpn").textContent = vpnTotal === 0 ? "None configured" : `${vpnTotal - vpnDown}/${vpnTotal} up`;
+  document.getElementById("ov-devices").textContent = ds ? `${ds.online}/${ds.total}` : "No data";
+  document.getElementById("ov-alerts").textContent = String(alertCount);
+  document.getElementById("ov-critical").textContent = String(overview.critical_alert_count);
+
+  const updatedEl = document.getElementById("status-updated");
+  if (overview.fetched_at) {
+    const d = new Date(overview.fetched_at * 1000);
+    updatedEl.textContent = `Updated ${d.toLocaleTimeString("en-AU", {timeZone: "Australia/Perth", hour: "2-digit", minute: "2-digit"})}`;
+  } else {
+    updatedEl.textContent = "";
+  }
+
+  if (overview.errors && overview.errors.length) {
+    // Non-blocking -- e.g. "Meraki credentials not configured" is expected
+    // in an Umbrella-only deployment, not something to interrupt the page over.
+    console.warn("NOC data errors:", overview.errors);
+  }
+}
+
+function renderOverviewAlerts(){
+  const tbody = document.querySelector("#overview-alerts-table tbody");
+  const rows = nocAlerts.slice(0, 8);
+  tbody.innerHTML = rows.map(a => `
+    <tr>
+      <td>${severityBadge(a.severity)}</td>
+      <td>${sourceBadge(a.source)}</td>
+      <td><span class="truncate" data-tooltip="${escapeHtml(a.title)}">${escapeHtml(a.title)}</span></td>
+      <td><span class="truncate" data-tooltip="${escapeHtml(a.context || "")}">${escapeHtml(a.context || "—")}</span></td>
+      <td>${escapeHtml(formatAlertTime(a.started_at))}</td>
+      <td>${alertLinkCell(a)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="6" class="empty">No alerts -- network looks healthy.</td></tr>`;
+  markTruncatedTips(tbody);
+}
+
+function getFilteredAlerts(){
+  const q = (document.getElementById("alerts-search").value || "").toLowerCase().trim();
+  return nocAlerts.filter(a => {
+    if (alertsSourceFilter && a.source !== alertsSourceFilter) return false;
+    if (alertsStatusFilter && a.status !== alertsStatusFilter) return false;
+    if (q && !`${a.title} ${a.context || ""}`.toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+function renderSecurityAlertsTable(){
+  const tbody = document.querySelector("#security-alerts-table tbody");
+  const rows = sortRows(getFilteredAlerts(), alertsSort);
+  tbody.innerHTML = rows.map(a => `
+    <tr>
+      <td>${severityBadge(a.severity)}</td>
+      <td>${sourceBadge(a.source)}</td>
+      <td><span class="truncate" data-tooltip="${escapeHtml(a.title)}">${escapeHtml(a.title)}</span></td>
+      <td><span class="truncate" data-tooltip="${escapeHtml(a.context || "")}">${escapeHtml(a.context || "—")}</span></td>
+      <td>${escapeHtml(formatAlertTime(a.started_at))}</td>
+      <td><span class="badge ${a.status === "open" ? "blocked" : "allowed"}">${escapeHtml(a.status)}</span></td>
+      <td>${alertLinkCell(a)}</td>
+    </tr>
+  `).join("") || `<tr><td colspan="7" class="empty">No alerts match.</td></tr>`;
+  markTruncatedTips(tbody);
+}
+
+// Field names below were confirmed against a live org's
+// getOrganizationApplianceUplinkStatuses/VpnStatuses response. Notably:
+// uplink entries have no loss%/latency fields (despite that being a
+// reasonable guess before checking) -- ip/publicIp/gateway are what's
+// actually there. networkName isn't present on uplink devices either
+// (only networkId), so main.py enriches it server-side from
+// list_networks() before this ever reaches the browser.
+// Builds the hover-list text for a device-count card, e.g. "Study (MS220-8P)\nLounge (MS220-8P)".
+// Capped so an org with a large fleet doesn't produce an unreadably tall tooltip.
+const DEVICE_TOOLTIP_MAX = 30;
+function deviceTooltipText(devices){
+  if (!devices || !devices.length) return "";
+  const names = devices.map(d => d.model ? `${d.name} (${d.model})` : d.name);
+  const shown = names.slice(0, DEVICE_TOOLTIP_MAX);
+  if (names.length > DEVICE_TOOLTIP_MAX) shown.push(`…and ${names.length - DEVICE_TOOLTIP_MAX} more`);
+  return shown.join("\n");
+}
+
+function setDeviceCountCard(id, count, devices){
+  const el = document.getElementById(id);
+  el.textContent = count;
+  const tip = deviceTooltipText(devices);
+  if (tip) {
+    el.dataset.tooltip = tip;
+    el.classList.add("has-tip");
+  } else {
+    delete el.dataset.tooltip;
+    el.classList.remove("has-tip");
+  }
+}
+
+function renderNetworkHealth(health){
+  const ds = health.device_summary;
+  const byStatus = (ds && ds.devices) || {};
+  setDeviceCountCard("health-dev-online", ds ? ds.online : "—", byStatus.online);
+  setDeviceCountCard("health-dev-offline", ds ? ds.offline : "—", byStatus.offline);
+  setDeviceCountCard("health-dev-alerting", ds ? ds.alerting : "—", byStatus.alerting);
+  setDeviceCountCard("health-dev-dormant", ds ? ds.dormant : "—", byStatus.dormant);
+  document.getElementById("health-dev-total").textContent = ds ? ds.total : "—";
+
+  const uplinkRows = [];
+  (health.uplinks || []).forEach(device => {
+    (device.uplinks || []).forEach(u => uplinkRows.push({device, u}));
+  });
+  document.querySelector("#uplinks-table tbody").innerHTML = uplinkRows.map(({device, u}) => {
+    const status = (u.status || "").toLowerCase();
+    const badgeClass = ["active", "ready", "online"].includes(status) ? "allowed" : "blocked";
+    return `
+      <tr>
+        <td>${escapeHtml(device.networkName || device.networkId || "—")}</td>
+        <td>${escapeHtml(device.model || device.serial || "—")}</td>
+        <td>${escapeHtml(u.interface || "—")}</td>
+        <td><span class="badge ${badgeClass}">${escapeHtml(u.status || "unknown")}</span></td>
+        <td>${escapeHtml(u.ip || "—")}</td>
+        <td>${escapeHtml(u.publicIp || "—")}</td>
+        <td>${escapeHtml(u.gateway || "—")}</td>
+      </tr>`;
+  }).join("") || `<tr><td colspan="7" class="empty">No uplink data.</td></tr>`;
+
+  // Meraki-to-Meraki peers (merakiVpnPeers) roll up into the status
+  // strip's VPN count (see main._vpn_summary); thirdPartyVpnPeers are
+  // shown here for visibility but deliberately excluded from that count --
+  // a single third-party peer is reported once per hub network with
+  // inconsistent reachability values from each hub's own vantage point,
+  // so summing them would misrepresent one physical link as several.
+  const vpnRows = [];
+  (health.vpn_statuses || []).forEach(network => {
+    const label = network.networkName || network.networkId || "—";
+    (network.merakiVpnPeers || []).forEach(p => {
+      const reachability = (p.reachability || "unknown").toLowerCase();
+      const badgeClass = reachability === "reachable" ? "allowed" : "blocked";
+      vpnRows.push(`
+        <tr>
+          <td>${escapeHtml(label)}</td>
+          <td>Meraki</td>
+          <td>${escapeHtml(p.networkName || p.name || "—")}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(p.reachability || "unknown")}</span></td>
+        </tr>`);
+    });
+    (network.thirdPartyVpnPeers || []).forEach(p => {
+      const reachability = (p.reachability || "unknown").toLowerCase();
+      const badgeClass = reachability === "reachable" ? "allowed" : "blocked";
+      vpnRows.push(`
+        <tr>
+          <td>${escapeHtml(label)}</td>
+          <td>Third-party</td>
+          <td>${escapeHtml(p.name || p.publicIp || "—")}</td>
+          <td><span class="badge ${badgeClass}">${escapeHtml(p.reachability || "unknown")}</span></td>
+        </tr>`);
+    });
+  });
+  document.querySelector("#vpn-table tbody").innerHTML = vpnRows.join("") || `<tr><td colspan="4" class="empty">No VPN peers.</td></tr>`;
+}
+
+async function refreshNoc(force){
+  try {
+    const params = new URLSearchParams();
+    if (force) params.set("refresh", "1");
+    if (selectedNetworkId) params.set("network_id", selectedNetworkId);
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const [overviewResp, alertsResp, healthResp] = await Promise.all([
+      fetch(`/api/noc/overview${qs}`),
+      fetch(`/api/noc/alerts${qs}`),
+      fetch(`/api/noc/network-health${qs}`),
+    ]);
+    const overview = await overviewResp.json();
+    const alertsData = await alertsResp.json();
+    const health = await healthResp.json();
+
+    if (!overview.error) renderStatusStrip(overview);
+    if (!alertsData.error) {
+      nocAlerts = alertsData.alerts || [];
+      renderOverviewAlerts();
+      renderSecurityAlertsTable();
+      document.getElementById("sca-not-configured-note").style.display = alertsData.sca_configured ? "none" : "block";
+    }
+    if (!health.error) renderNetworkHealth(health);
+  } catch (e) {
+    // Best-effort background refresh -- a transient NOC fetch failure
+    // shouldn't interrupt the rest of the page (e.g. an in-progress
+    // Umbrella fetch on the DNS Activity tab).
+    console.error("NOC refresh failed", e);
+  }
+}
+
+// --- Firmware section ---
+// Current vs. available firmware per product type for the selected
+// network, with the ability to schedule (and cancel) an upgrade.
+// Scheduling is a real write against live hardware -- see the
+// confirmation modal below, which requires an explicit Confirm click
+// after showing exactly what will change; nothing here auto-schedules.
+let firmwareData = null;
+let fwModalProductType = null;
+
+async function loadFirmware(){
+  const note = document.getElementById("firmware-no-network-note");
+  const panel = document.getElementById("firmware-panel");
+  if (!selectedNetworkId) {
+    note.style.display = "block";
+    panel.style.display = "none";
+    return;
+  }
+  note.style.display = "none";
+  panel.style.display = "block";
+  document.getElementById("firmware-network-name").textContent = (networksById[selectedNetworkId] || {}).name || selectedNetworkId;
+
+  const tbody = document.querySelector("#firmware-table tbody");
+  tbody.innerHTML = `<tr><td colspan="5" class="empty">Loading...</td></tr>`;
+  try {
+    const resp = await fetch(`/api/firmware?network_id=${encodeURIComponent(selectedNetworkId)}`);
+    const data = await resp.json();
+    if (data.error) {
+      tbody.innerHTML = `<tr><td colspan="5" class="empty" style="color:var(--blocked);">${escapeHtml(data.error)}</td></tr>`;
+      return;
+    }
+    firmwareData = data;
+    renderFirmwareTable();
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty" style="color:var(--blocked);">Failed to load: ${escapeHtml(String(e))}</td></tr>`;
+  }
+}
+
+function renderFirmwareTable(){
+  const tbody = document.querySelector("#firmware-table tbody");
+  const products = (firmwareData && firmwareData.products) || {};
+  const types = Object.keys(products);
+  if (!types.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="empty">No firmware data for this network.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = types.map(ptype => {
+    const p = products[ptype];
+    const current = p.currentVersion || {};
+    const next = p.nextUpgrade || {};
+    const hasSchedule = !!next.time;
+    const statusBadge = p.isUpgradeAvailable
+      ? `<span class="badge severity-warning">Upgrade available</span>`
+      : `<span class="badge allowed">Up to date</span>`;
+    const scheduledCell = hasSchedule
+      ? `${escapeHtml(formatAlertTime(next.time))} → ${escapeHtml((next.toVersion || {}).shortName || "—")} <a class="fw-cancel-link" data-cancel-product="${escapeHtml(ptype)}">Cancel</a>`
+      : "—";
+    const candidates = (p.availableVersions || []).filter(v => String(v.id) !== String(current.id));
+    const actionCell = candidates.length
+      ? `<button class="fw-schedule-btn" data-schedule-product="${escapeHtml(ptype)}">Schedule</button>`
+      : "";
+    return `
+      <tr>
+        <td>${escapeHtml(ptype)}</td>
+        <td>${escapeHtml(current.shortName || current.firmware || "—")}</td>
+        <td>${statusBadge}</td>
+        <td>${scheduledCell}</td>
+        <td>${actionCell}</td>
+      </tr>`;
+  }).join("");
+}
+
+function openFirmwareModal(productType){
+  const p = firmwareData.products[productType];
+  if (!p) return;
+  fwModalProductType = productType;
+  const current = p.currentVersion || {};
+
+  document.getElementById("fw-modal-network").textContent = (networksById[selectedNetworkId] || {}).name || selectedNetworkId;
+  document.getElementById("fw-modal-product").textContent = productType;
+  document.getElementById("fw-modal-current").textContent = current.shortName || current.firmware || "—";
+
+  const versionSelect = document.getElementById("fw-modal-version");
+  const candidates = (p.availableVersions || []).filter(v => String(v.id) !== String(current.id));
+  versionSelect.innerHTML = candidates.map(v =>
+    `<option value="${escapeHtml(v.id)}">${escapeHtml(v.shortName || v.firmware)}${v.releaseType ? ` (${escapeHtml(v.releaseType)})` : ""}</option>`
+  ).join("");
+
+  document.getElementById("fw-modal-time").value = "";
+  document.getElementById("firmware-modal-overlay").classList.add("open");
+}
+
+function closeFirmwareModal(){
+  document.getElementById("firmware-modal-overlay").classList.remove("open");
+  fwModalProductType = null;
+}
+
+async function cancelFirmwareUpgrade(productType){
+  if (!confirm(`Cancel the scheduled firmware upgrade for "${productType}"?`)) return;
+  try {
+    const resp = await fetch("/api/firmware/cancel", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({network_id: selectedNetworkId, product_type: productType}),
+    });
+    const data = await resp.json();
+    if (data.error) { showError(`Failed to cancel scheduled upgrade: ${escapeHtml(data.error)}`); return; }
+    loadFirmware();
+  } catch (e) {
+    showError(`Failed to cancel scheduled upgrade: ${escapeHtml(String(e))}`);
+  }
+}
+
+// --- Network Map section ---
+// Renders /api/topology's nodes/links as inline SVG. Meraki's topology is
+// inherently hierarchical (always exactly one root: true node, the
+// gateway), so layout is a plain BFS hop-distance layering rather than a
+// general force-directed graph layout -- deterministic, and doesn't need
+// vendoring a new charting/graph library into static/vendor/.
+const MAP_STATUS_COLOR = {online: "var(--allowed)", alerting: "var(--warning)", offline: "var(--blocked)", dormant: "var(--blocked)"};
+
+// Explicit abbreviations for the node label -- naively slicing productType
+// (e.g. "appliance".slice(0,2).toUpperCase() -> "AP") collides with "AP"
+// meaning Access Point, so an MX security appliance was mislabeled the
+// same as a wireless node. Mirrors meraki_client.py's PRODUCT_TYPE_LABELS
+// (used for the infrastructure-IP client-info fallback) for consistency.
+const PRODUCT_TYPE_ABBR = {
+  appliance: "MX",
+  switch: "SW",
+  switchCatalyst: "SW",
+  wireless: "AP",
+  camera: "CAM",
+  sensor: "SN",
+  cellularGateway: "CG",
+  wirelessController: "WC",
+};
+
+async function loadTopology(){
+  const note = document.getElementById("map-no-network-note");
+  const panel = document.getElementById("map-panel");
+  if (!selectedNetworkId) {
+    note.style.display = "block";
+    panel.style.display = "none";
+    return;
+  }
+  note.style.display = "none";
+  panel.style.display = "block";
+  document.getElementById("map-network-name").textContent = (networksById[selectedNetworkId] || {}).name || selectedNetworkId;
+
+  const wrap = document.getElementById("map-svg-wrap");
+  wrap.innerHTML = `<div class="empty">Loading...</div>`;
+  try {
+    const resp = await fetch(`/api/topology?network_id=${encodeURIComponent(selectedNetworkId)}`);
+    const data = await resp.json();
+    if (data.error) {
+      wrap.innerHTML = `<div class="empty" style="color:var(--blocked);">${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    renderTopology(data);
+  } catch (e) {
+    wrap.innerHTML = `<div class="empty" style="color:var(--blocked);">Failed to load: ${escapeHtml(String(e))}</div>`;
+  }
+}
+
+function renderTopology(data){
+  const wrap = document.getElementById("map-svg-wrap");
+  const nodes = data.nodes || [];
+  const links = data.links || [];
+  if (!nodes.length) {
+    wrap.innerHTML = `<div class="empty">No topology data for this network.</div>`;
+    return;
+  }
+
+  const nodeById = {};
+  nodes.forEach(n => { nodeById[n.derivedId] = n; });
+
+  const adjacency = {};
+  nodes.forEach(n => { adjacency[n.derivedId] = []; });
+  const edges = [];
+  links.forEach(link => {
+    const ends = link.ends || [];
+    if (ends.length !== 2) return;
+    const [endA, endB] = ends;
+    const aId = endA.node && endA.node.derivedId;
+    const bId = endB.node && endB.node.derivedId;
+    if (!aId || !bId || !nodeById[aId] || !nodeById[bId]) return;
+    adjacency[aId].push(bId);
+    adjacency[bId].push(aId);
+    edges.push({a: aId, b: bId, endA, endB});
+  });
+
+  const rootNode = nodes.find(n => n.root) || nodes[0];
+  const depth = {[rootNode.derivedId]: 0};
+  const queue = [rootNode.derivedId];
+  while (queue.length) {
+    const id = queue.shift();
+    (adjacency[id] || []).forEach(neighborId => {
+      if (!(neighborId in depth)) {
+        depth[neighborId] = depth[id] + 1;
+        queue.push(neighborId);
+      }
+    });
+  }
+  let maxDepth = Math.max(0, ...Object.values(depth));
+  nodes.forEach(n => {
+    if (!(n.derivedId in depth)) { maxDepth += 1; depth[n.derivedId] = maxDepth; }
+  });
+
+  const rows = {};
+  nodes.forEach(n => {
+    const d = depth[n.derivedId];
+    (rows[d] = rows[d] || []).push(n);
+  });
+  const rowKeys = Object.keys(rows).map(Number).sort((a, b) => a - b);
+
+  const rowHeight = 110, colWidth = 150;
+  const maxRowLen = Math.max(...rowKeys.map(k => rows[k].length));
+  const width = Math.max(420, colWidth * maxRowLen + 60);
+  const height = rowHeight * rowKeys.length + 60;
+
+  const pos = {};
+  rowKeys.forEach(rk => {
+    const rowNodes = rows[rk];
+    const y = 40 + rk * rowHeight;
+    const totalWidth = rowNodes.length * colWidth;
+    const startX = (width - totalWidth) / 2 + colWidth / 2;
+    rowNodes.forEach((n, i) => { pos[n.derivedId] = {x: startX + i * colWidth, y}; });
+  });
+
+  let svg = `<svg width="${width}" height="${height}">`;
+
+  edges.forEach(e => {
+    const p1 = pos[e.a], p2 = pos[e.b];
+    if (!p1 || !p2) return;
+    const lldpA = (e.endA.discovered && e.endA.discovered.lldp) || {};
+    const lldpB = (e.endB.discovered && e.endB.discovered.lldp) || {};
+    const portInfo = `${(e.endA.device || {}).name || ""} port ${lldpA.portId || "?"} ↔ ${(e.endB.device || {}).name || ""} port ${lldpB.portId || "?"}`;
+    svg += `<line x1="${p1.x}" y1="${p1.y}" x2="${p2.x}" y2="${p2.y}" stroke="var(--border)" stroke-width="2"><title>${escapeHtml(portInfo)}</title></line>`;
+  });
+
+  nodes.forEach(n => {
+    const p = pos[n.derivedId];
+    if (!p) return;
+    const device = n.device || {};
+    const color = MAP_STATUS_COLOR[(device.status || "").toLowerCase()] || "var(--muted)";
+    const label = device.name || device.serial || "—";
+    const productType = device.productType || "";
+    const clientCount = ((device.clients || {}).counts || {}).total || 0;
+    const tooltip = `${label} (${device.model || productType || "unknown"})\nStatus: ${device.status || "unknown"}\nClients: ${clientCount}`;
+    svg += `
+      <g>
+        <circle cx="${p.x}" cy="${p.y}" r="22" fill="${color}" fill-opacity="0.18" stroke="${color}" stroke-width="2" />
+        <text x="${p.x}" y="${p.y + 4}" text-anchor="middle" font-size="11" font-family="'IBM Plex Mono',monospace" fill="var(--text)">${escapeHtml(PRODUCT_TYPE_ABBR[productType] || (productType || "?").slice(0, 2).toUpperCase())}</text>
+        <text x="${p.x}" y="${p.y + 38}" text-anchor="middle" font-size="10" font-family="'IBM Plex Mono',monospace" fill="var(--muted)">${escapeHtml(label)}</text>
+        <title>${escapeHtml(tooltip)}</title>
+      </g>`;
+  });
+
+  svg += `</svg>`;
+  wrap.innerHTML = svg;
+}
+
+function switchToTab(tabName){
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === tabName));
+  document.querySelectorAll(".tab-content").forEach(c => c.classList.toggle("active", c.id === `tab-${tabName}`));
+}
+
+document.querySelectorAll(".tab").forEach(tab => {
+  tab.addEventListener("click", () => switchToTab(tab.dataset.tab));
+});
+
+function switchToSection(sectionName){
+  document.querySelectorAll(".section-tab").forEach(t => t.classList.toggle("active", t.dataset.section === sectionName));
+  document.querySelectorAll(".section-panel").forEach(p => p.classList.toggle("active", p.id === `section-${sectionName}`));
+  // Firmware/Network Map are per-network and fairly static (backed by a
+  // 1hr server cache), so it's simplest to just (re)load on every switch
+  // into them rather than tracking staleness -- cheap due to that cache.
+  if (sectionName === "firmware") loadFirmware();
+  if (sectionName === "map") loadTopology();
+}
+
+document.querySelectorAll(".section-tab").forEach(tab => {
+  tab.addEventListener("click", () => switchToSection(tab.dataset.section));
+});
+
+document.querySelectorAll("[data-jump-section]").forEach(el => {
+  el.addEventListener("click", () => switchToSection(el.dataset.jumpSection));
+});
+
+document.querySelectorAll("#security-alerts-table th[data-key]").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    alertsSort.dir = (alertsSort.key === key) ? -alertsSort.dir : -1;
+    alertsSort.key = key;
+    renderSecurityAlertsTable();
+  });
+});
+
+wireClearableSearch("alerts-search", "alerts-search-clear", renderSecurityAlertsTable);
+document.getElementById("alerts-source-select").addEventListener("change", (e) => {
+  alertsSourceFilter = e.target.value;
+  renderSecurityAlertsTable();
+});
+document.getElementById("alerts-status-select").addEventListener("change", (e) => {
+  alertsStatusFilter = e.target.value;
+  renderSecurityAlertsTable();
+});
+
+document.querySelectorAll("#dest-table th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    destSort.dir = (destSort.key === key) ? -destSort.dir : -1;
+    destSort.key = key;
+    renderDestTable();
+  });
+});
+document.querySelectorAll("#cat-table th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    catSort.dir = (catSort.key === key) ? -catSort.dir : -1;
+    catSort.key = key;
+    renderCatTable();
+  });
+});
+document.querySelectorAll("#ip-table th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    ipSort.dir = (ipSort.key === key) ? -ipSort.dir : -1;
+    ipSort.key = key;
+    renderIpTable();
+  });
+});
+
+document.querySelectorAll("#identity-search-table th").forEach(th => {
+  th.addEventListener("click", () => {
+    const key = th.dataset.key;
+    identitySearchSort.dir = (identitySearchSort.key === key) ? -identitySearchSort.dir : -1;
+    identitySearchSort.key = key;
+    renderIdentitySearchTable();
+  });
+});
+
+document.querySelector("#dest-table").addEventListener("click", (e) => {
+  const cell = e.target.closest("td.domain.clickable");
+  if (cell) showDomainRequests(cell.dataset.domain);
+});
+
+document.querySelector("#cat-table").addEventListener("click", (e) => {
+  const cell = e.target.closest("td.category.clickable");
+  if (cell) filterDestinationsByCategory(cell.dataset.category);
+});
+
+document.querySelector("#ip-table").addEventListener("click", (e) => {
+  const cell = e.target.closest("td.clickable-ip");
+  if (cell) openClientInfoModal(cell.dataset.ip);
+});
+
+document.querySelector("#identity-search-table").addEventListener("click", (e) => {
+  const ipCell = e.target.closest("td.clickable-ip");
+  if (ipCell) { openClientInfoModal(ipCell.dataset.ip); return; }
+  const domainCell = e.target.closest("td.domain.clickable");
+  if (domainCell) showDomainRequests(domainCell.dataset.domain);
+});
+
+document.getElementById("client-info-close").addEventListener("click", closeClientInfoModal);
+document.getElementById("client-info-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "client-info-overlay") closeClientInfoModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && document.getElementById("client-info-overlay").classList.contains("open")) {
+    closeClientInfoModal();
+  }
+  if (e.key === "Escape" && document.getElementById("firmware-modal-overlay").classList.contains("open")) {
+    closeFirmwareModal();
+  }
+});
+
+document.querySelector("#firmware-table").addEventListener("click", (e) => {
+  const scheduleBtn = e.target.closest("[data-schedule-product]");
+  if (scheduleBtn) { openFirmwareModal(scheduleBtn.dataset.scheduleProduct); return; }
+  const cancelLink = e.target.closest("[data-cancel-product]");
+  if (cancelLink) { cancelFirmwareUpgrade(cancelLink.dataset.cancelProduct); return; }
+});
+
+document.getElementById("firmware-modal-close").addEventListener("click", closeFirmwareModal);
+document.getElementById("fw-modal-cancel-btn").addEventListener("click", closeFirmwareModal);
+document.getElementById("firmware-modal-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "firmware-modal-overlay") closeFirmwareModal();
+});
+
+document.getElementById("fw-modal-confirm-btn").addEventListener("click", async () => {
+  const versionId = document.getElementById("fw-modal-version").value;
+  const timeLocal = document.getElementById("fw-modal-time").value;
+  if (!versionId || !timeLocal) {
+    showError("Pick a target version and a scheduled time before confirming.");
+    return;
+  }
+  const timeIso = new Date(timeLocal).toISOString();
+  const btn = document.getElementById("fw-modal-confirm-btn");
+  btn.disabled = true;
+  btn.textContent = "Scheduling...";
+  try {
+    const resp = await fetch("/api/firmware/schedule", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        network_id: selectedNetworkId,
+        product_type: fwModalProductType,
+        version_id: versionId,
+        time: timeIso,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      showError(`Failed to schedule upgrade: ${escapeHtml(data.error)}`);
+    } else {
+      closeFirmwareModal();
+      loadFirmware();
+    }
+  } catch (e) {
+    showError(`Failed to schedule upgrade: ${escapeHtml(String(e))}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Confirm Schedule";
+  }
+});
+
+function wireClearableSearch(inputId, clearBtnId, renderFn){
+  const input = document.getElementById(inputId);
+  const clearBtn = document.getElementById(clearBtnId);
+
+  input.addEventListener("input", () => {
+    clearBtn.style.display = input.value ? "inline-block" : "none";
+    renderFn();
+  });
+
+  clearBtn.addEventListener("click", () => {
+    input.value = "";
+    clearBtn.style.display = "none";
+    input.focus();
+    renderFn();
+  });
+}
+
+wireClearableSearch("dest-search", "dest-search-clear", renderDestTable);
+wireClearableSearch("cat-search", "cat-search-clear", renderCatTable);
+document.getElementById("verdict-select").addEventListener("change", (e) => { state.verdict = e.target.value; });
+document.getElementById("fetch-btn").addEventListener("click", () => loadActivity(true));
+document.getElementById("cancel-fetch-btn").addEventListener("click", cancelFetch);
+document.getElementById("ip-search-btn").addEventListener("click", searchIp);
+document.getElementById("ip-view-client-btn").addEventListener("click", (e) => {
+  const ip = e.target.dataset.ip;
+  if (ip) openClientInfoModal(ip);
+});
+document.getElementById("ip-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("ip-suggestions-panel").classList.remove("open");
+    searchIp();
+  }
+});
+document.getElementById("ip-search-input").addEventListener("focus", () => {
+  updateIpSuggestionsPanel();
+  document.getElementById("ip-suggestions-panel").classList.add("open");
+});
+document.getElementById("ip-search-input").addEventListener("input", () => {
+  updateIpSuggestionsPanel();
+  document.getElementById("ip-suggestions-panel").classList.add("open");
+});
+document.getElementById("ip-search-clear").addEventListener("click", () => {
+  clearIpSearch();
+  document.getElementById("ip-suggestions-panel").classList.remove("open");
+  document.getElementById("ip-search-input").focus();
+});
+document.addEventListener("click", (e) => {
+  const dropdown = document.getElementById("ip-dropdown");
+  if (!dropdown.contains(e.target)) {
+    document.getElementById("ip-suggestions-panel").classList.remove("open");
+  }
+});
+
+document.getElementById("identity-search-btn").addEventListener("click", searchIdentity);
+document.getElementById("identity-search-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    document.getElementById("identity-search-suggestions-panel").classList.remove("open");
+    searchIdentity();
+  }
+});
+document.getElementById("identity-search-input").addEventListener("focus", () => {
+  updateIdentitySearchSuggestionsPanel();
+  document.getElementById("identity-search-suggestions-panel").classList.add("open");
+});
+document.getElementById("identity-search-input").addEventListener("input", () => {
+  selectedIdentitySearchId = null; // typing invalidates a prior dropdown pick until re-resolved
+  updateIdentitySearchSuggestionsPanel();
+  document.getElementById("identity-search-suggestions-panel").classList.add("open");
+});
+document.getElementById("identity-search-clear").addEventListener("click", () => {
+  clearIdentitySearch();
+  document.getElementById("identity-search-suggestions-panel").classList.remove("open");
+  document.getElementById("identity-search-input").focus();
+});
+document.addEventListener("click", (e) => {
+  const dropdown = document.getElementById("identity-search-dropdown");
+  if (!dropdown.contains(e.target)) {
+    document.getElementById("identity-search-suggestions-panel").classList.remove("open");
+  }
+});
+
+setupDropdown("identity-dropdown", "identity-btn");
+setupDropdown("category-dropdown", "category-btn");
+setupDropdown("preset-dropdown", "preset-btn");
+
+renderRangePills();
+loadIdentities();
+loadPresets();
+document.getElementById("subtitle").textContent = "Select a time range and click Fetch to load activity.";
+
+refreshNoc(false);
+setInterval(() => refreshNoc(false), NOC_REFRESH_MS);
+loadNetworks();
+</script>
+</body>
+</html>
