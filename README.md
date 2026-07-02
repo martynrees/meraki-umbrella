@@ -1,5 +1,9 @@
 # Home NOC
 
+Forked from Richard Vanderwaal's original Umbrella DNS reporting
+dashboard, which this app's DNS Activity section is still built on --
+see [Credits](#credits) below.
+
 A self-hosted network operations dashboard for a home (or small) Meraki
 network. It combines three data sources into one page:
 
@@ -430,3 +434,12 @@ reuse `MERAKI_API_KEY`/`MERAKI_ORG_ID`.
   reasoning. The frontend requires an explicit modal confirmation (current
   -> target version, scheduled time, a reboot warning) before the request
   is ever sent -- there's no one-click schedule button anywhere.
+
+## Credits
+
+This app is a fork of an Umbrella DNS reporting dashboard originally
+started by **Richard Vanderwaal**. The DNS Activity section -- fetching
+DNS activity from Umbrella's Reporting API, the adaptive-bisection
+pagination handling, and the destinations/categories/by-IP/by-identity
+breakdowns -- is his original work. Network Health, Security Alerts,
+Firmware, and Network Map were added on top of that foundation.
